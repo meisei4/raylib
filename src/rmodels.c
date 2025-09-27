@@ -1484,17 +1484,6 @@ void DrawMesh(Mesh mesh, Material material, Matrix transform)
 
         rlSetUniform(material.shader.locs[SHADER_LOC_COLOR_DIFFUSE], values, SHADER_UNIFORM_VEC4, 1);
     }
-    else
-    {
-        float values[4] = {
-            material.maps[MATERIAL_MAP_DIFFUSE].color.r/255.0f,
-            material.maps[MATERIAL_MAP_DIFFUSE].color.g/255.0f,
-            material.maps[MATERIAL_MAP_DIFFUSE].color.b/255.0f,
-            material.maps[MATERIAL_MAP_DIFFUSE].color.a/255.0f
-        };
-        rlSetVertexAttributeDefault(RL_DEFAULT_SHADER_ATTRIB_LOCATION_COLOR, values, SHADER_ATTRIB_VEC4, 4);
-        rlDisableVertexAttribute(RL_DEFAULT_SHADER_ATTRIB_LOCATION_COLOR);
-    }
 
     // Upload to shader material.colSpecular (if location available)
     if (material.shader.locs[SHADER_LOC_COLOR_SPECULAR] != -1)
@@ -1546,6 +1535,17 @@ void DrawMesh(Mesh mesh, Material material, Matrix transform)
 #endif
     //-----------------------------------------------------
 
+    if (material.shader.locs[SHADER_LOC_COLOR_DIFFUSE] == -1 && material.shader.locs[SHADER_LOC_VERTEX_COLOR] != -1)
+    {
+        float materialColorDefault[4] = {
+            (float)material.maps[MATERIAL_MAP_DIFFUSE].color.r/255.0f,
+            (float)material.maps[MATERIAL_MAP_DIFFUSE].color.g/255.0f,
+            (float)material.maps[MATERIAL_MAP_DIFFUSE].color.b/255.0f,
+            (float)material.maps[MATERIAL_MAP_DIFFUSE].color.a/255.0f
+        };
+        rlSetVertexAttributeDefault(material.shader.locs[SHADER_LOC_VERTEX_COLOR], materialColorDefault, SHADER_ATTRIB_VEC4, 4);
+    }
+
     // Bind active texture maps (if available)
     for (int i = 0; i < MAX_MATERIAL_MAPS; i++)
     {
@@ -1575,10 +1575,22 @@ void DrawMesh(Mesh mesh, Material material, Matrix transform)
         rlSetVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_POSITION], 3, RL_FLOAT, 0, 0, 0);
         rlEnableVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_POSITION]);
 
-        // Bind mesh VBO data: vertex texcoords (shader-location = 1)
-        rlEnableVertexBuffer(mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_TEXCOORD]);
-        rlSetVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_TEXCOORD01], 2, RL_FLOAT, 0, 0, 0);
-        rlEnableVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_TEXCOORD01]);
+        if (material.shader.locs[SHADER_LOC_VERTEX_TEXCOORD01] != -1)
+        {
+            // Bind mesh VBO data: vertex texcoords (shader-location = 1)
+            if (mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_TEXCOORD] != 0)
+            {
+                rlEnableVertexBuffer(mesh.vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_TEXCOORD]);
+                rlSetVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_TEXCOORD01], 2, RL_FLOAT, 0, 0, 0);
+                rlEnableVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_TEXCOORD01]);
+            }
+            else
+            {
+                float values[2] = {0.0f, 0.0f};
+                rlSetVertexAttributeDefault(material.shader.locs[SHADER_LOC_VERTEX_TEXCOORD01], values, SHADER_ATTRIB_VEC2, 2);
+                rlDisableVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_TEXCOORD01]);
+            }
+        }
 
         if (material.shader.locs[SHADER_LOC_VERTEX_NORMAL] != -1)
         {
@@ -1602,6 +1614,13 @@ void DrawMesh(Mesh mesh, Material material, Matrix transform)
                 // Set default value for defined vertex attribute in shader but not provided by mesh
                 // WARNING: It could result in GPU undefined behaviour
                 float value[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+                if (material.shader.locs[SHADER_LOC_COLOR_DIFFUSE] == -1)
+                {
+                    value[0] = (float)material.maps[MATERIAL_MAP_DIFFUSE].color.r/255.0f;
+                    value[1] = (float)material.maps[MATERIAL_MAP_DIFFUSE].color.g/255.0f;
+                    value[2] = (float)material.maps[MATERIAL_MAP_DIFFUSE].color.b/255.0f;
+                    value[3] = (float)material.maps[MATERIAL_MAP_DIFFUSE].color.a/255.0f;
+                }
                 rlSetVertexAttributeDefault(material.shader.locs[SHADER_LOC_VERTEX_COLOR], value, SHADER_ATTRIB_VEC4, 4);
                 rlDisableVertexAttribute(material.shader.locs[SHADER_LOC_VERTEX_COLOR]);
             }
@@ -1690,6 +1709,13 @@ void DrawMesh(Mesh mesh, Material material, Matrix transform)
 
     // Disable shader program
     rlDisableShader();
+
+    if (material.shader.locs[SHADER_LOC_VERTEX_COLOR] != -1)
+    {
+        //Restore global color vertex buffer back to white (after potential tint changes from no-lighting, color buffer fallback)
+        float value[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        rlSetVertexAttributeDefault(material.shader.locs[SHADER_LOC_VERTEX_COLOR], value, SHADER_ATTRIB_VEC4, 4);
+    }
 
     // Restore rlgl internal modelview and projection matrices
     rlSetMatrixModelview(matView);
