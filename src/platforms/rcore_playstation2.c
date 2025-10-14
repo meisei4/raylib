@@ -63,6 +63,8 @@
 #include <ps2s/timer.h>
 
 /* ps2gl */
+#include "GL/glut.h"
+#include "GL/ps2gl.h"
 #include <ps2gl/debug.h>
 #include <ps2gl/displaycontext.h>
 #include <ps2gl/drawcontext.h>
@@ -107,9 +109,19 @@ static const struct
 // Types and Structures Definition
 //----------------------------------------------------------------------------------
 
+
+#define PS2GL_MAX_TEXTURE_LIMIT 10 //You can change this limit
+typedef struct {
+    GLuint id;
+    int    width, height;
+} ps2gl_surface_t;
+
+
 typedef struct {
     // TODO: Define the platform specific variables required
     int version;
+    ps2gl_surface_t surfaces[PS2GL_MAX_TEXTURE_LIMIT];
+    unsigned int surface_index;
 } PlatformData;
 
 //----------------------------------------------------------------------------------
@@ -902,6 +914,36 @@ int initializePad(int port, int slot)
     waitPadReady(port, slot);
 
     return 1;
+}
+
+static inline int RoundUp64(int x) { return (x + 63) & ~63; }
+
+static void rlLoadTexturePS2(GLuint id, const void *data, int width, int height)
+{
+    const int bpp = 4;
+    const int gsWidth = RoundUp64(width);
+    const size_t srcPitch = (size_t)width * bpp;
+    const size_t dstPitch = (size_t)gsWidth * bpp;
+    const size_t imageSize = dstPitch * (size_t)height;
+
+    uint8_t *texels = (uint8_t*)pglutAllocDmaMem(imageSize);
+    const uint8_t *src = (const uint8_t*)data;
+
+    for (int y = 0; y < height; ++y) {
+        uint8_t *dstRow = texels + (size_t)y * dstPitch;
+        const uint8_t *srcRow = src + (size_t)y * srcPitch;
+        memcpy(dstRow, srcRow, srcPitch);
+        memset(dstRow + srcPitch, 0, dstPitch - srcPitch);
+    }
+    glBindTexture(GL_TEXTURE_2D, id);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, texels);
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 // Initialize platform: graphics, inputs and more
 int InitPlatform(void)
