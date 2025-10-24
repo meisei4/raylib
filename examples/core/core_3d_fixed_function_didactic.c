@@ -21,16 +21,16 @@
 //----------------------------------------------------------------------------------
 // Constants
 //----------------------------------------------------------------------------------
-static const int N64_WIDTH  = 640;
+static const int N64_WIDTH = 640;
 static const int N64_HEIGHT = 480;
 
 static const float ANGULAR_VELOCITY = 1.25f;
 static const float FOVY_PERSPECTIVE = 60.0f;
 
-static const Vector3 MODEL_POS   = {0.0f, 0.0f, 0.0f};
+static const Vector3 MODEL_POS = {0.0f, 0.0f, 0.0f};
 static const Vector3 MODEL_SCALE = {1.0f, 1.0f, 1.0f};
 
-static const Vector3 OBSERVER_POS   = {0.0f, 0.0f, 2.0f};
+static const Vector3 OBSERVER_POS = {0.0f, 0.0f, 2.0f};
 static const Vector3 JUGEMU_POS_ISO = {3.0f, 1.0f, 3.0f};
 
 //----------------------------------------------------------------------------------
@@ -38,15 +38,16 @@ static const Vector3 JUGEMU_POS_ISO = {3.0f, 1.0f, 3.0f};
 //----------------------------------------------------------------------------------
 enum
 {
-    FLAG_NDC_OVERLAY         = 1u << 0, // E
-    FLAG_ASPECT              = 1u << 1, // Q  (0=ISO didactic, 1=ANISO true aspect)
+    FLAG_NDC_OVERLAY = 1u << 0,         // E
+    FLAG_ASPECT = 1u << 1,              // Q  (0=ISO didactic, 1=ANISO true aspect)
     FLAG_PERSPECTIVE_CORRECT = 1u << 2, // P
-    FLAG_PAUSE               = 1u << 3, // F
-    FLAG_COLOR_MODE          = 1u << 4  // C  <-- NEW: toggle color vs texture
+    FLAG_PAUSE = 1u << 3,               // F
+    FLAG_COLOR_MODE = 1u << 4           // C  <-- NEW: toggle color vs texture
 };
 
 static unsigned int gFlags = 0;
 
+#define NDC_SPACE() ((gFlags & FLAG_NDC_OVERLAY) != 0)
 #define ANISOTROPIC() ((gFlags & FLAG_ASPECT) != 0)
 #define PERSPECTIVE_CORRECT() ((gFlags & FLAG_PERSPECTIVE_CORRECT) != 0)
 #define PAUSED() ((gFlags & FLAG_PAUSE) != 0)
@@ -55,31 +56,10 @@ static unsigned int gFlags = 0;
 // "PerspectiveCorrect" screenshot resources CPU capture OpenGL11 + near-plane quad
 //----------------------------------------------------------------------------------
 static Texture2D gPerspectiveCorrectTexture = {0};
-static bool gPerspectiveCorrectTextureReady = false;
 
-static Mesh gNearQuad       = {0};
+//TODO: what why? please not global shit
+static Mesh gNearQuad = {0};
 static Model gNearQuadModel = {0};
-static bool gNearQuadBuilt  = false;
-
-//----------------------------------------------------------------------------------
-// Topology
-//----------------------------------------------------------------------------------
-typedef struct WeldedVertex
-{
-    int id;
-} WeldedVertex;
-
-typedef struct Topology
-{
-    int triangleCount;
-    unsigned short *triangles;               // indices
-    Vector3 *verticesPerTriangle;            // positions per triangle stored as 3 consecutive Vector3s
-    int *weldedVertexId;                     // per-vertex welded id
-    WeldedVertex *weldedVerticesPerTriangle; // per-triangle welded vertices
-    int (*neighborsPerTriangle)[3];          // neighbor triangle indices per edge
-    unsigned char *frontTrianglesFlag;       // bool-like flags for front-facing triangles
-    unsigned char *silhouetteTrianglesFlag;  // bool-like flags for silhouette triangles
-} Topology;
 
 static bool moveJugemuOrbital(Camera3D *jugemu, float deltaTime);
 static void capturePerspectiveCorrectToTexture(
@@ -88,7 +68,7 @@ static void capturePerspectiveCorrectToTexture(
     Vector3 modelPos,
     float rotRadians,
     Vector3 modelScale,
-    Texture2D tex,
+    Texture2D currentTexture,
     bool usePVC);
 static void drawObservedAxes(Camera3D *observer);
 static void mapFrustumToNdcCube(
@@ -103,17 +83,14 @@ static void mapFrustumToNdcCube(
     Vector3 modelScale,
     float meshRotationRadians);
 static void drawFrustum(Camera3D *observer, float aspect, float nearClipPlane, float farClipPlane);
-static void topologyBuild(Topology *topology, Mesh *mesh);
-static void topologyFrontTriangles(Topology *topology, float rotationRadians, Camera3D *observer);
-static void topologySilhouetteTriangles(Topology *topology);
 static void drawNearPlaneIntersectionalDiskMesh(
     Camera3D *observer,
     float nearClipPlane,
-    Model *nearPlaneIntersectionalDiskModel,
+    const Mesh *srcMesh,
+    Model *nearPlaneIntersectionModel,
     Vector3 modelPosition,
     Vector3 modelScale,
     float meshRotationRadians,
-    Topology *topology,
     bool reflectYAxis);
 static void ensureNearPlaneQuadBuilt(void);
 static void updateNearPlaneQuadGeometry(Camera3D *observer, float nearClipPlane, int screenWidth, int screenHeight);
@@ -137,7 +114,6 @@ static void perspectiveIncorrectProjectionDidactic(
     Vector3 modelScale,
     float meshRotationRadians,
     Texture2D texture);
-static void freeTopology(Topology *topology);
 
 //------------------------------------------------------------------------------------
 // Program main entry point
@@ -150,44 +126,45 @@ int main(void)
     SetTargetFPS(60);
 
     float nearClipPlane = 1.0f;
-    float farClipPlane  = 3.0f;
+    float farClipPlane = 3.0f;
 
-    Camera3D mainObserver   = {0};
-    mainObserver.position   = OBSERVER_POS;
-    mainObserver.target     = (Vector3){0, 0, 0};
-    mainObserver.up         = (Vector3){0, 1, 0};
-    mainObserver.fovy       = FOVY_PERSPECTIVE;
+    Camera3D mainObserver = {0};
+    mainObserver.position = OBSERVER_POS;
+    mainObserver.target = (Vector3){0, 0, 0};
+    mainObserver.up = (Vector3){0, 1, 0};
+    mainObserver.fovy = FOVY_PERSPECTIVE;
     mainObserver.projection = CAMERA_PERSPECTIVE;
 
-    int screenWidth  = GetScreenWidth();
+    int screenWidth = GetScreenWidth();
     int screenHeight = GetScreenHeight();
-    float aspect     = (float)screenWidth / (float)screenHeight;
+    float aspect = (float)screenWidth / (float)screenHeight;
 
-    Camera3D jugemu   = (Camera3D){0};
-    jugemu.position   = JUGEMU_POS_ISO;
-    jugemu.target     = (Vector3){0, 0, 0};
-    jugemu.up         = (Vector3){0, 1, 0};
-    jugemu.fovy       = FOVY_PERSPECTIVE;
+    Camera3D jugemu = (Camera3D){0};
+    jugemu.position = JUGEMU_POS_ISO;
+    jugemu.target = (Vector3){0, 0, 0};
+    jugemu.up = (Vector3){0, 1, 0};
+    jugemu.fovy = FOVY_PERSPECTIVE;
     jugemu.projection = CAMERA_PERSPECTIVE;
 
     TraceLog(
         LOG_INFO,
         TextFormat("jugemu init pos: (%.3f, %.3f, %.3f)", jugemu.position.x, jugemu.position.y, jugemu.position.z));
 
-    float idleTimer        = 0.0f;
+    float idleTimer = 0.0f;
     bool movedSinceLastLog = false;
 
     float meshRotationRadians = 0.0f;
 
-    Mesh cubeMesh   = GenMeshCube(1.0f, 1.0f, 1.0f);
+    Mesh cubeMesh = GenMeshCube(1.0f, 1.0f, 1.0f);
     Model mainModel = LoadModelFromMesh(cubeMesh);
 
-    Mesh ndcMesh          = (Mesh){0};
-    ndcMesh.vertexCount   = mainModel.meshes[0].vertexCount;
+    Mesh ndcMesh = (Mesh){0};
+    ndcMesh.vertexCount = mainModel.meshes[0].vertexCount;
     ndcMesh.triangleCount = mainModel.meshes[0].triangleCount;
-    ndcMesh.vertices      = RL_CALLOC(ndcMesh.vertexCount * 3, sizeof(float));
-    ndcMesh.texcoords     = RL_CALLOC(ndcMesh.vertexCount * 2, sizeof(float));
-    ndcMesh.indices       = RL_CALLOC(ndcMesh.triangleCount * 3, sizeof(unsigned short));
+    ndcMesh.vertices = RL_CALLOC(ndcMesh.vertexCount * 3, sizeof(float));
+    ndcMesh.texcoords = RL_CALLOC(ndcMesh.vertexCount * 2, sizeof(float));
+    ndcMesh.indices = RL_CALLOC(ndcMesh.triangleCount * 3, sizeof(unsigned short));
+
     if (mainModel.meshes[0].texcoords)
     {
         for (int vertexIndex = 0; vertexIndex < ndcMesh.vertexCount; vertexIndex++)
@@ -196,22 +173,27 @@ int main(void)
             ndcMesh.texcoords[2 * vertexIndex + 1] = mainModel.meshes[0].texcoords[2 * vertexIndex + 1];
         }
     }
-    UploadMesh(&ndcMesh, false);
+    if (mainModel.meshes[0].indices)
+    {
+        memcpy(ndcMesh.indices, mainModel.meshes[0].indices, sizeof(unsigned short) * 3 * ndcMesh.triangleCount);
+    }
+
     Model ndcModel = LoadModelFromMesh(ndcMesh);
 
-    Mesh nearPlaneIntersectionalDiskMesh        = (Mesh){0};
-    nearPlaneIntersectionalDiskMesh.vertexCount = mainModel.meshes[0].vertexCount;
+    Mesh nearPlaneIntersectionalDiskMesh = (Mesh){0};
+    nearPlaneIntersectionalDiskMesh.vertexCount =
+        3 * mainModel.meshes[0].triangleCount; // capacity for 3 points per tri
     nearPlaneIntersectionalDiskMesh.vertices =
         RL_CALLOC(nearPlaneIntersectionalDiskMesh.vertexCount * 3, sizeof(float));
-    UploadMesh(&nearPlaneIntersectionalDiskMesh, false);
     Model nearPlaneIntersectionalDiskModel = LoadModelFromMesh(nearPlaneIntersectionalDiskMesh);
 
-    Image checked = GenImageChecked(16, 16, 4, 4, BLACK, WHITE);
-    Texture2D tex = LoadTextureFromImage(checked);
-    UnloadImage(checked);
-    mainModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = tex;
-    ndcModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture  = tex;
+    Image checkeredImage = GenImageChecked(16, 16, 4, 4, BLACK, WHITE);
+    Texture2D checkeredTexture = LoadTextureFromImage(checkeredImage);
+    UnloadImage(checkeredImage);
+    mainModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = checkeredTexture;
+    ndcModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = checkeredTexture;
     applyBarycentricPalette(&mainModel.meshes[0]);
+    applyBarycentricPalette(&ndcModel.meshes[0]);
     //--------------------------------------------------------------------------------------
 
     // Main loop
@@ -219,56 +201,30 @@ int main(void)
     {
         // Update
         //----------------------------------------------------------------------------------
-        // Update
-        //----------------------------------------------------------------------------------
         if (IsKeyPressed(KEY_E))
             gFlags ^= FLAG_NDC_OVERLAY;
         if (IsKeyPressed(KEY_Q))
             gFlags ^= FLAG_ASPECT;
         if (IsKeyPressed(KEY_P))
-            gFlags ^= FLAG_PERSPECTIVE_CORRECT; // <- no auto-freeze, ever
+            gFlags ^= FLAG_PERSPECTIVE_CORRECT;
         if (IsKeyPressed(KEY_F))
-            gFlags ^= FLAG_PAUSE; // <- only way to pause
+            gFlags ^= FLAG_PAUSE;
         if (IsKeyPressed(KEY_C))
             gFlags ^= FLAG_COLOR_MODE;
 
-        screenWidth  = GetScreenWidth();
+        screenWidth = GetScreenWidth();
         screenHeight = GetScreenHeight();
-        aspect       = (float)screenWidth / (float)screenHeight;
+        aspect = (float)screenWidth / (float)screenHeight;
 
         float deltaTime = GetFrameTime();
 
         if (!PAUSED())
-        {
             meshRotationRadians -= ANGULAR_VELOCITY * deltaTime;
 
-            if (moveJugemuOrbital(&jugemu, deltaTime))
-            {
-                movedSinceLastLog = true;
-                idleTimer         = 0.0f;
-            }
-            else if (movedSinceLastLog)
-            {
-                idleTimer += deltaTime;
-                if (idleTimer >= 1.0f)
-                {
-                    TraceLog(
-                        LOG_INFO,
-                        TextFormat(
-                            "jugemu stopped at: (%.3f, %.3f, %.3f)",
-                            jugemu.position.x,
-                            jugemu.position.y,
-                            jugemu.position.z));
-                    movedSinceLastLog = false;
-                    idleTimer         = 0.0f;
-                }
-            }
-        }
-        //----------------------------------------------------------------------------------
         if (moveJugemuOrbital(&jugemu, deltaTime))
         {
             movedSinceLastLog = true;
-            idleTimer         = 0.0f;
+            idleTimer = 0.0f;
         }
         else if (movedSinceLastLog)
         {
@@ -283,7 +239,7 @@ int main(void)
                         jugemu.position.y,
                         jugemu.position.z));
                 movedSinceLastLog = false;
-                idleTimer         = 0.0f;
+                idleTimer = 0.0f;
             }
         }
 
@@ -296,14 +252,14 @@ int main(void)
         if (PERSPECTIVE_CORRECT())
         {
             capturePerspectiveCorrectToTexture(
-                &mainObserver, &mainModel, MODEL_POS, meshRotationRadians, MODEL_SCALE, tex, COLOR_MODE());
+                &mainObserver, &mainModel, MODEL_POS, meshRotationRadians, MODEL_SCALE, checkeredTexture, COLOR_MODE());
             ClearBackground(BLACK);
         }
 
         BeginMode3D(jugemu);
         drawObservedAxes(&mainObserver);
 
-        if ((gFlags & FLAG_NDC_OVERLAY) ? 1 : 0)
+        if (NDC_SPACE())
         {
             rlDisableBackfaceCulling();
 
@@ -318,32 +274,26 @@ int main(void)
                 MODEL_POS,
                 MODEL_SCALE,
                 meshRotationRadians);
-            ndcModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id = tex.id;
-            ndcModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id = COLOR_MODE() ? 0 : tex.id;
+            //TODO: this needs work because its the whole colors vs texture and not clear on the projected near plane
+            ndcModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id = COLOR_MODE() ? 0 : checkeredTexture.id;
             DrawModelEx(ndcModel, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * meshRotationRadians, MODEL_SCALE, WHITE);
             rlSetLineWidth(2.0f);
+            //TODO: this is not working anymore. Color mode setting the vertex array to enabled's fault???????
             ndcModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id = 0;
             DrawModelWiresEx(ndcModel, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * meshRotationRadians, MODEL_SCALE, BLUE);
             rlSetPointSize(8.0f);
             DrawModelPointsEx(
                 ndcModel, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * meshRotationRadians, MODEL_SCALE, GREEN);
-
-            Topology topoNdc;
-            topologyBuild(&topoNdc, &ndcModel.meshes[0]);
-            topologyFrontTriangles(&topoNdc, meshRotationRadians, &mainObserver);
-            topologySilhouetteTriangles(&topoNdc);
-
             drawNearPlaneIntersectionalDiskMesh(
                 &mainObserver,
                 nearClipPlane,
+                &ndcModel.meshes[0],
                 &nearPlaneIntersectionalDiskModel,
                 MODEL_POS,
                 MODEL_SCALE,
                 meshRotationRadians,
-                &topoNdc,
                 true);
-
-            if (PERSPECTIVE_CORRECT() && gPerspectiveCorrectTextureReady)
+            if (PERSPECTIVE_CORRECT())
             {
                 ensureNearPlaneQuadBuilt();
                 updateNearPlaneQuadGeometry(&mainObserver, nearClipPlane, screenWidth, screenHeight);
@@ -376,17 +326,17 @@ int main(void)
                         MODEL_POS,
                         MODEL_SCALE,
                         meshRotationRadians,
-                        tex);
+                        checkeredTexture);
                 }
             }
-
-            freeTopology(&topoNdc);
         }
         else
         {
-            mainModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id = COLOR_MODE() ? 0 : tex.id;
+            //TODO: this needs work because its the whole colors vs texture and not clear on the projected near plane
+            mainModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id = COLOR_MODE() ? 0 : checkeredTexture.id;
             DrawModelEx(mainModel, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * meshRotationRadians, MODEL_SCALE, WHITE);
             rlSetLineWidth(2.0f);
+            //TODO: this is not working???? Color mode setting the vertex array to enabled's fault???????
             mainModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id = 0;
             DrawModelWiresEx(
                 mainModel, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * meshRotationRadians, MODEL_SCALE, BLUE);
@@ -396,22 +346,17 @@ int main(void)
 
             drawFrustum(&mainObserver, ANISOTROPIC() ? aspect : 1.0f, nearClipPlane, farClipPlane);
 
-            Topology topo;
-            topologyBuild(&topo, &mainModel.meshes[0]);
-            topologyFrontTriangles(&topo, meshRotationRadians, &mainObserver);
-            topologySilhouetteTriangles(&topo);
-
             drawNearPlaneIntersectionalDiskMesh(
                 &mainObserver,
                 nearClipPlane,
+                &mainModel.meshes[0],
                 &nearPlaneIntersectionalDiskModel,
                 MODEL_POS,
                 MODEL_SCALE,
                 meshRotationRadians,
-                &topo,
                 false);
 
-            if (PERSPECTIVE_CORRECT() && gPerspectiveCorrectTextureReady)
+            if (PERSPECTIVE_CORRECT())
             {
                 ensureNearPlaneQuadBuilt();
                 updateNearPlaneQuadGeometry(&mainObserver, nearClipPlane, screenWidth, screenHeight);
@@ -444,38 +389,35 @@ int main(void)
                         MODEL_POS,
                         MODEL_SCALE,
                         meshRotationRadians,
-                        tex);
+                        checkeredTexture);
                 }
             }
-
-            freeTopology(&topo);
         }
-
-        // Optional software raster
-        // int rasterStep = 4;
-        // drawNearPlaneSoftwareRaster(&mainObserver, screenWidth, screenHeight, nearClipPlane,
-        //                             &mainModel.meshes[0], MODEL_POS, MODEL_SCALE, meshRotationRadians, rasterStep);
 
         EndMode3D();
 
+        // --- Key Legend ---
         DrawText(
-            "E: NDC overlay  ·  Q: isotropy  ·  P: perspective-correctness  ·  F: freeze  ·  Arrows: orbit  ·  W/S: zoom  ·  A/D: roll  ·  Space: reset",
+            "E: NDC | Q: aspect | P: perspective divide | C: colors | arrowkeys/WASD: move camera | Space: reset camera",
             12,
             14,
             10,
             RAYWHITE);
 
+        int lineY = 32;
+        int lineStep = 12;
+
+        DrawText(TextFormat("SPACE:   %s", NDC_SPACE() ? "NDC" : "WORLD"), 12, lineY, 10, RAYWHITE);
+        lineY += lineStep;
+
+        DrawText(TextFormat("ASPECT:  %s", ANISOTROPIC() ? "ANISOTROPIC" : "ISOTROPIC"), 12, lineY, 10, RAYWHITE);
+        lineY += lineStep;
+
         DrawText(
-            TextFormat(
-                "NDC:%u  Aspect:%s  Proj:%s  Freeze:%u",
-                (gFlags & FLAG_NDC_OVERLAY) ? 1 : 0,
-                ANISOTROPIC() ? "ANISO" : "ISO",
-                PERSPECTIVE_CORRECT() ? "CORRECT" : "INCORRECT",
-                (gFlags & FLAG_PAUSE) ? 1 : 0),
-            12,
-            28,
-            10,
-            RAYWHITE);
+            TextFormat("PERSPECTIVE:  %s", PERSPECTIVE_CORRECT() ? "CORRECT" : "INCORRECT"), 12, lineY, 10, RAYWHITE);
+        lineY += lineStep;
+
+        DrawText(TextFormat("COLORS:  %s", COLOR_MODE() ? "ON" : "OFF"), 12, lineY, 10, RAYWHITE);
 
         EndDrawing();
         //----------------------------------------------------------------------------------
@@ -486,7 +428,7 @@ int main(void)
     UnloadModel(mainModel);
     UnloadModel(ndcModel);
     UnloadModel(nearPlaneIntersectionalDiskModel);
-    UnloadTexture(tex);
+    UnloadTexture(checkeredTexture);
     CloseWindow();
     //--------------------------------------------------------------------------------------
 
@@ -494,7 +436,7 @@ int main(void)
 }
 
 //----------------------------------------------------------------------------------
-// Small math helpers
+// Small math helpers  //TODO: many of these maybe already exist in raylib math right???
 //----------------------------------------------------------------------------------
 static inline Vector3 observedLineOfSight(Camera3D *observer)
 {
@@ -505,36 +447,28 @@ static inline Vector3 observedLineOfSight(Camera3D *observer)
 static inline void observedBasis(
     Camera3D *observer, Vector3 *observedLineOfSightOut, Vector3 *observedRightOut, Vector3 *observedUpOut)
 {
-    Vector3 los             = observedLineOfSight(observer);
-    Vector3 right           = Vector3Normalize(Vector3CrossProduct(los, observer->up));
-    Vector3 up              = Vector3Normalize(Vector3CrossProduct(right, los));
+    Vector3 los = observedLineOfSight(observer);
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(los, observer->up));
+    Vector3 up = Vector3Normalize(Vector3CrossProduct(right, los));
     *observedLineOfSightOut = los;
-    *observedRightOut       = right;
-    *observedUpOut          = up;
+    *observedRightOut = right;
+    *observedUpOut = up;
 }
 
 static inline Vector3 rotatePointAboutAxis(Vector3 point, Vector3 axisStart, Vector3 axisEnd, float angleRadians)
 {
-    Vector3 axisDir       = Vector3Normalize(Vector3Subtract(axisEnd, axisStart));
+    //TODO: this has to exist somewhere in raylib math right???
+    Vector3 axisDir = Vector3Normalize(Vector3Subtract(axisEnd, axisStart));
     Vector3 localFromAxis = Vector3Subtract(point, axisStart);
-    Vector3 rotatedLocal  = Vector3RotateByAxisAngle(localFromAxis, axisDir, angleRadians);
+    Vector3 rotatedLocal = Vector3RotateByAxisAngle(localFromAxis, axisDir, angleRadians);
     return Vector3Add(axisStart, rotatedLocal);
-}
-
-static inline void rotateVerticesInPlaneSlice(Vector3 *vertices, int vertexCount, float rotationRadians)
-{
-    float s = sinf(rotationRadians), c = cosf(rotationRadians);
-    for (int vertexIndex = 0; vertexIndex < vertexCount; vertexIndex++)
-    {
-        float x0 = vertices[vertexIndex].x, z0 = vertices[vertexIndex].z;
-        vertices[vertexIndex].x = c * x0 + s * z0;
-        vertices[vertexIndex].z = -s * x0 + c * z0;
-    }
 }
 
 static inline Vector3
     applyModelTranslateRotateScale(Vector3 modelCoord, Vector3 modelPosition, Vector3 modelScale, float rotationRadians)
 {
+    //TODO: this should be somewhere closer in proximity to where its relevant in the pipeline stages..
+
     Matrix M = MatrixMultiply(
         MatrixMultiply(MatrixScale(modelScale.x, modelScale.y, modelScale.z), MatrixRotateY(rotationRadians)),
         MatrixTranslate(modelPosition.x, modelPosition.y, modelPosition.z));
@@ -544,6 +478,8 @@ static inline Vector3
 static inline Vector3 applyInverseModelTranslateRotateScale(
     Vector3 worldCoord, Vector3 modelPosition, Vector3 modelScale, float rotationRadians)
 {
+    //TODO: this should be somewhere closer in proximity to where its relevant in the pipeline stages..
+
     Matrix M = MatrixMultiply(
         MatrixMultiply(MatrixScale(modelScale.x, modelScale.y, modelScale.z), MatrixRotateY(rotationRadians)),
         MatrixTranslate(modelPosition.x, modelPosition.y, modelPosition.z));
@@ -553,10 +489,14 @@ static inline Vector3 applyInverseModelTranslateRotateScale(
 
 static inline Vector3 nearPlaneIntersection(Camera3D *observer, float nearClipPlane, Vector3 worldCoord)
 {
-    Vector3 los        = observedLineOfSight(observer);
+    Vector3 los = observedLineOfSight(observer);
     Vector3 rayToWorld = Vector3Subtract(worldCoord, observer->position);
-    float signedDepth  = Vector3DotProduct(rayToWorld, los); // positive forward depth
-    float t            = nearClipPlane / (signedDepth + 1e-9f);
+    float signedDepth = Vector3DotProduct(rayToWorld, los);
+    if (signedDepth <= 0.0f)
+    {
+        return Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
+    }
+    float t = nearClipPlane / signedDepth;
     return Vector3Add(observer->position, Vector3Scale(rayToWorld, t));
 }
 
@@ -565,51 +505,38 @@ static inline Vector3 triangleNormal(Vector3 a, Vector3 b, Vector3 c)
     return Vector3Normalize(Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, a)));
 }
 
-// FLAG STUIFF:
-
-// Build a 2-tri quad with UVs flipped vertically to sample a RenderTexture correctly.
 static void ensureNearPlaneQuadBuilt(void)
 {
-    if (gNearQuadBuilt)
+    //TODO: there is likely an easier more elegant way to do this, WHY DOES THIS EVEN NEED TO EXIST...
+    if (gNearQuad.vertexCount > 0 && gNearQuadModel.meshCount > 0)
         return;
 
-    gNearQuad               = (Mesh){0};
-    gNearQuad.vertexCount   = 4;
+    gNearQuad = (Mesh){0};
+    gNearQuad.vertexCount = 4;
     gNearQuad.triangleCount = 2;
-    gNearQuad.vertices      = (float *)RL_CALLOC(4 * 3, sizeof(float));
-    gNearQuad.texcoords     = (float *)RL_CALLOC(4 * 2, sizeof(float));
-    gNearQuad.indices       = (unsigned short *)RL_CALLOC(6, sizeof(unsigned short));
+    gNearQuad.vertices = (float *)RL_CALLOC(4 * 3, sizeof(float));
+    gNearQuad.texcoords = (float *)RL_CALLOC(4 * 2, sizeof(float));
+    gNearQuad.indices = (unsigned short *)RL_CALLOC(6, sizeof(unsigned short));
 
-    // Standard UVs for CPU screenshot textures (no flip)
-    float uvs[8] = {
-        0.0f,
-        0.0f, // 0 = TL
-        1.0f,
-        0.0f, // 1 = TR
-        1.0f,
-        1.0f, // 2 = BR
-        0.0f,
-        1.0f // 3 = BL
-    };
+    float uvs[8] = {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f};
     memcpy(gNearQuad.texcoords, uvs, sizeof(uvs));
-
     unsigned short idx[6] = {0, 2, 1, 0, 3, 2};
     memcpy(gNearQuad.indices, idx, sizeof(idx));
-
-    UploadMesh(&gNearQuad, false);
     gNearQuadModel = LoadModelFromMesh(gNearQuad);
-    gNearQuadBuilt = true;
 }
 
 static void updateNearPlaneQuadGeometry(Camera3D *observer, float nearClipPlane, int screenWidth, int screenHeight)
 {
+    //TODO: there is likely an easier more elegant way to do this, shouldnt this be gen mesh plane or something??????
+    // WHY SO MUCH VECTOR MATH....
+
     Vector3 los, right, up;
     observedBasis(observer, &los, &right, &up);
 
-    float aspect   = (float)screenWidth / (float)screenHeight;
+    float aspect = (float)screenWidth / (float)screenHeight;
     float halfFovy = DEG2RAD * observer->fovy * 0.5f;
-    float halfH    = nearClipPlane * tanf(halfFovy);
-    float halfW    = ANISOTROPIC() ? (halfH * aspect) : halfH;
+    float halfH = nearClipPlane * tanf(halfFovy);
+    float halfW = ANISOTROPIC() ? (halfH * aspect) : halfH;
 
     Vector3 centerNear = Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
 
@@ -619,25 +546,22 @@ static void updateNearPlaneQuadGeometry(Camera3D *observer, float nearClipPlane,
     Vector3 BL = Vector3Add(centerNear, Vector3Add(Vector3Scale(up, -halfH), Vector3Scale(right, -halfW)));
 
     float *v = gNearQuad.vertices;
-    v[0]     = TL.x;
-    v[1]     = TL.y;
-    v[2]     = TL.z;
-    v[3]     = TR.x;
-    v[4]     = TR.y;
-    v[5]     = TR.z;
-    v[6]     = BR.x;
-    v[7]     = BR.y;
-    v[8]     = BR.z;
-    v[9]     = BL.x;
-    v[10]    = BL.y;
-    v[11]    = BL.z;
-
-    UploadMesh(&gNearQuad, false);
+    v[0] = TL.x;
+    v[1] = TL.y;
+    v[2] = TL.z;
+    v[3] = TR.x;
+    v[4] = TR.y;
+    v[5] = TR.z;
+    v[6] = BR.x;
+    v[7] = BR.y;
+    v[8] = BR.z;
+    v[9] = BL.x;
+    v[10] = BL.y;
+    v[11] = BL.z;
 }
 
 static void composeAlphaFromMask(Image *rgba, const Image *mask, unsigned char threshold)
 {
-    // Preconditions: same size
     if (rgba->width != mask->width || rgba->height != mask->height)
         return;
 
@@ -647,13 +571,13 @@ static void composeAlphaFromMask(Image *rgba, const Image *mask, unsigned char t
 
     unsigned char *dst = (unsigned char *)rgba->data;
     unsigned char *msk = (unsigned char *)maskCopy.data;
-    int n              = rgba->width * rgba->height;
+    int n = rgba->width * rgba->height;
 
     for (int i = 0; i < n; ++i)
     {
-        unsigned int v  = (unsigned int)msk[4 * i + 0] + (unsigned int)msk[4 * i + 1] + (unsigned int)msk[4 * i + 2];
-        unsigned char a = (unsigned char)(v / 3);
-        dst[4 * i + 3]  = (a > threshold) ? a : 0;
+        unsigned int r = msk[4 * i + 0], g = msk[4 * i + 1], b = msk[4 * i + 2];
+        unsigned int y = (r * 30u + g * 59u + b * 11u) / 100u;
+        dst[4 * i + 3] = (y > threshold) ? 255 : 0;
     }
 
     UnloadImage(maskCopy);
@@ -665,51 +589,46 @@ static void capturePerspectiveCorrectToTexture(
     Vector3 modelPos,
     float rotRadians,
     Vector3 modelScale,
-    Texture2D tex,
+    Texture2D currentTexture,
     bool usePVC)
 {
-    // ---------- PASS 1: normal color ----------
+    //TODO: there is likely an easier more elegant way to do this, its not intuitive to read what is happening here.
+
     ClearBackground(BLACK);
     BeginMode3D(*mainObserver);
-    Texture2D prevTex                                     = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture;
-    model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = usePVC ? (Texture2D){0} : tex;
+    Texture2D previousTexture = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture;
+    model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = usePVC ? (Texture2D){0} : currentTexture;
     DrawModelEx(*model, modelPos, (Vector3){0, 1, 0}, RAD2DEG * rotRadians, modelScale, WHITE);
-    model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = prevTex;
+    model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = previousTexture;
     EndMode3D();
 
-    Image colorShot = LoadImageFromScreen();
-    ImageFormat(&colorShot, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    Image coloredFramebuffer = LoadImageFromScreen();
+    ImageFormat(&coloredFramebuffer, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
 
-    // ---------- PASS 2: coverage mask (solid white mesh on black) ----------
     ClearBackground(BLACK);
     BeginMode3D(*mainObserver);
-    Texture2D saveTex = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture;
-    Color saveCol     = model->materials[0].maps[MATERIAL_MAP_ALBEDO].color;
+    Texture2D cacheTexture = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture;
+    Color cacheColor = model->materials[0].maps[MATERIAL_MAP_ALBEDO].color;
 
     model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = (Texture2D){0};
-    model->materials[0].maps[MATERIAL_MAP_ALBEDO].color   = WHITE;
+    model->materials[0].maps[MATERIAL_MAP_ALBEDO].color = WHITE;
 
     DrawModelEx(*model, modelPos, (Vector3){0, 1, 0}, RAD2DEG * rotRadians, modelScale, WHITE);
 
-    model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = saveTex;
-    model->materials[0].maps[MATERIAL_MAP_ALBEDO].color   = saveCol;
+    model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = cacheTexture;
+    model->materials[0].maps[MATERIAL_MAP_ALBEDO].color = cacheColor;
     EndMode3D();
 
-    Image maskShot = LoadImageFromScreen();
-    composeAlphaFromMask(&colorShot, &maskShot, 1);
+    Image alphaMaskedFramebuffer = LoadImageFromScreen();
+    composeAlphaFromMask(&coloredFramebuffer, &alphaMaskedFramebuffer, 1);
 
-    if (gPerspectiveCorrectTextureReady)
-    {
-        UpdateTexture(gPerspectiveCorrectTexture, colorShot.data);
-    }
+    if (gPerspectiveCorrectTexture.id != 0)
+        UpdateTexture(gPerspectiveCorrectTexture, coloredFramebuffer.data);
     else
-    {
-        gPerspectiveCorrectTexture      = LoadTextureFromImage(colorShot);
-        gPerspectiveCorrectTextureReady = true;
-    }
+        gPerspectiveCorrectTexture = LoadTextureFromImage(coloredFramebuffer);
 
-    UnloadImage(maskShot);
-    UnloadImage(colorShot);
+    UnloadImage(alphaMaskedFramebuffer);
+    UnloadImage(coloredFramebuffer);
 }
 
 //----------------------------------------------------------------------------------
@@ -727,17 +646,18 @@ static void drawObservedAxes(Camera3D *observer)
 
 static void drawFrustum(Camera3D *observer, float aspect, float nearClipPlane, float farClipPlane)
 {
+    //TODO: there is likely an easier more elegant way to do this, like a mesh GEN or something and modify not just drawing the lines
     Vector3 los, right, up;
     observedBasis(observer, &los, &right, &up);
 
     Vector3 centerNear = Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
-    Vector3 centerFar  = Vector3Add(observer->position, Vector3Scale(los, farClipPlane));
+    Vector3 centerFar = Vector3Add(observer->position, Vector3Scale(los, farClipPlane));
 
-    float halfFovy       = DEG2RAD * observer->fovy * 0.5f;
+    float halfFovy = DEG2RAD * observer->fovy * 0.5f;
     float halfHeightNear = nearClipPlane * tanf(halfFovy);
-    float halfWidthNear  = halfHeightNear * aspect;
-    float halfHeightFar  = farClipPlane * tanf(halfFovy);
-    float halfWidthFar   = halfHeightFar * aspect;
+    float halfWidthNear = halfHeightNear * aspect;
+    float halfHeightFar = farClipPlane * tanf(halfFovy);
+    float halfWidthFar = halfHeightFar * aspect;
 
     Vector3 nearTL =
         Vector3Add(Vector3Add(centerNear, Vector3Scale(up, halfHeightNear)), Vector3Scale(right, -halfWidthNear));
@@ -782,6 +702,8 @@ static void drawNdcCube(
     float halfDepthNdcCube,
     Color edgeColor)
 {
+    //TODO: there is likely an easier more elegant way to do this, like a mesh GEN and draw not just drawing the lines
+
     Vector3 los, right, up;
     observedBasis(observer, &los, &right, &up);
 
@@ -826,19 +748,24 @@ static Vector3
     Vector3 los, right, up;
     observedBasis(observer, &los, &right, &up);
 
-    float halfFovy       = DEG2RAD * observer->fovy * 0.5f;
+    float halfFovy = DEG2RAD * observer->fovy * 0.5f;
     float halfHeightNear = nearClipPlane * tanf(halfFovy);
-    float halfWidthNear  = halfHeightNear * aspect;
-
-    Vector3 intersectionCoord = nearPlaneIntersection(observer, nearClipPlane, worldCoord);
-    Vector3 centerNear        = Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
-    Vector3 clipPlaneVector   = Vector3Subtract(intersectionCoord, centerNear);
-
-    float xNdc = Vector3DotProduct(clipPlaneVector, right) / (halfWidthNear + 1e-9f);
-    float yNdc = Vector3DotProduct(clipPlaneVector, up) / (halfHeightNear + 1e-9f);
+    float halfWidthNear = halfHeightNear * aspect;
 
     float signedDepth = Vector3DotProduct(Vector3Subtract(worldCoord, observer->position), los);
-    float zNdc = ((farClipPlane + nearClipPlane) - (2.0f * farClipPlane * nearClipPlane) / (signedDepth + 1e-9f)) /
+    if (signedDepth <= 0.0f)
+    {
+        return (Vector3){0.0f, 0.0f, 1.0f};
+    }
+
+    Vector3 intersectionCoord = nearPlaneIntersection(observer, nearClipPlane, worldCoord);
+    Vector3 centerNear = Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
+    Vector3 clipPlaneVector = Vector3Subtract(intersectionCoord, centerNear);
+
+    float xNdc = Vector3DotProduct(clipPlaneVector, right) / halfWidthNear;
+    float yNdc = Vector3DotProduct(clipPlaneVector, up) / halfHeightNear;
+
+    float zNdc = ((farClipPlane + nearClipPlane) - (2.0f * farClipPlane * nearClipPlane) / signedDepth) /
                  (farClipPlane - nearClipPlane);
 
     return (Vector3){xNdc, yNdc, zNdc};
@@ -875,16 +802,16 @@ static void updateWorldToNdcMappedMesh(
     float meshRotationRadians)
 {
     float aspect = (float)screenWidth / (float)screenHeight;
-    Vector3 los  = observedLineOfSight(observer);
+    Vector3 los = observedLineOfSight(observer);
 
-    float halfFovy       = DEG2RAD * observer->fovy * 0.5f;
+    float halfFovy = DEG2RAD * observer->fovy * 0.5f;
     float halfHeightNear = nearClipPlane * tanf(halfFovy);
 
     float halfWidthNear = ANISOTROPIC() ? (halfHeightNear * aspect) : halfHeightNear;
-    float halfDepthNdc  = ANISOTROPIC() ? (0.5f * (farClipPlane - nearClipPlane)) : halfHeightNear;
+    float halfDepthNdc = ANISOTROPIC() ? (0.5f * (farClipPlane - nearClipPlane)) : halfHeightNear;
 
-    Vector3 centerNear     = Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
-    Vector3 ndcCubeCenter  = Vector3Add(centerNear, Vector3Scale(los, halfDepthNdc));
+    Vector3 centerNear = Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
+    Vector3 ndcCubeCenter = Vector3Add(centerNear, Vector3Scale(los, halfDepthNdc));
     float aspectForMapping = ANISOTROPIC() ? aspect : 1.0f;
     if (worldMesh->indices && ndcMesh->indices)
     {
@@ -910,8 +837,6 @@ static void updateWorldToNdcMappedMesh(
         ndcMesh->vertices[3 * vertexIndex + 1] = mappedObjectCoord.y;
         ndcMesh->vertices[3 * vertexIndex + 2] = mappedObjectCoord.z;
     }
-
-    UploadMesh(ndcMesh, false);
 }
 
 static void mapFrustumToNdcCube(
@@ -927,15 +852,15 @@ static void mapFrustumToNdcCube(
     float meshRotationRadians)
 
 {
-    float aspect         = (float)screenWidth / (float)screenHeight;
-    Vector3 los          = observedLineOfSight(observer);
-    float halfFovy       = DEG2RAD * observer->fovy * 0.5f;
+    float aspect = (float)screenWidth / (float)screenHeight;
+    Vector3 los = observedLineOfSight(observer);
+    float halfFovy = DEG2RAD * observer->fovy * 0.5f;
     float halfHeightNear = nearClipPlane * tanf(halfFovy);
 
     float halfWidthNear = ANISOTROPIC() ? (halfHeightNear * aspect) : halfHeightNear;
-    float halfDepthNdc  = ANISOTROPIC() ? (0.5f * (farClipPlane - nearClipPlane)) : halfHeightNear;
+    float halfDepthNdc = ANISOTROPIC() ? (0.5f * (farClipPlane - nearClipPlane)) : halfHeightNear;
 
-    Vector3 centerNear    = Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
+    Vector3 centerNear = Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
     Vector3 ndcCubeCenter = Vector3Add(centerNear, Vector3Scale(los, halfDepthNdc));
 
     drawNdcCube(observer, ndcCubeCenter, halfWidthNear, halfHeightNear, halfDepthNdc, SKYBLUE);
@@ -953,182 +878,6 @@ static void mapFrustumToNdcCube(
         meshRotationRadians);
 }
 
-static void freeTopology(Topology *topology)
-{
-    if (!topology)
-        return;
-    free(topology->triangles);
-    free(topology->verticesPerTriangle);
-    free(topology->weldedVertexId);
-    free(topology->weldedVerticesPerTriangle);
-    free(topology->neighborsPerTriangle);
-    free(topology->frontTrianglesFlag);
-    free(topology->silhouetteTrianglesFlag);
-    memset(topology, 0, sizeof(*topology));
-}
-
-static void topologyBuild(Topology *topology, Mesh *mesh)
-{
-    memset(topology, 0, sizeof(topology[0]));
-    topology->triangleCount = mesh->triangleCount;
-    if (topology->triangleCount <= 0)
-        return;
-
-    topology->triangles = (unsigned short *)malloc(sizeof(unsigned short) * 3 * topology->triangleCount);
-    if (mesh->indices)
-        memcpy(topology->triangles, mesh->indices, sizeof(unsigned short) * 3 * topology->triangleCount);
-    else
-        for (int linearIndex = 0; linearIndex < 3 * topology->triangleCount; linearIndex++)
-            topology->triangles[linearIndex] = (unsigned short)linearIndex;
-
-    topology->verticesPerTriangle = (Vector3 *)malloc(sizeof(Vector3) * 3 * topology->triangleCount);
-    for (int triangleIndex = 0; triangleIndex < topology->triangleCount; triangleIndex++)
-    {
-        unsigned short indexA = topology->triangles[3 * triangleIndex + 0];
-        unsigned short indexB = topology->triangles[3 * triangleIndex + 1];
-        unsigned short indexC = topology->triangles[3 * triangleIndex + 2];
-        topology->verticesPerTriangle[3 * triangleIndex + 0] =
-            (Vector3){mesh->vertices[3 * indexA + 0], mesh->vertices[3 * indexA + 1], mesh->vertices[3 * indexA + 2]};
-        topology->verticesPerTriangle[3 * triangleIndex + 1] =
-            (Vector3){mesh->vertices[3 * indexB + 0], mesh->vertices[3 * indexB + 1], mesh->vertices[3 * indexB + 2]};
-        topology->verticesPerTriangle[3 * triangleIndex + 2] =
-            (Vector3){mesh->vertices[3 * indexC + 0], mesh->vertices[3 * indexC + 1], mesh->vertices[3 * indexC + 2]};
-    }
-
-    topology->weldedVertexId = (int *)malloc(sizeof(int) * mesh->vertexCount);
-    for (int vertexIndex = 0; vertexIndex < mesh->vertexCount; vertexIndex++)
-    {
-        int quantX      = (int)lroundf(mesh->vertices[3 * vertexIndex + 0] / 1e-5f);
-        int quantY      = (int)lroundf(mesh->vertices[3 * vertexIndex + 1] / 1e-5f);
-        int quantZ      = (int)lroundf(mesh->vertices[3 * vertexIndex + 2] / 1e-5f);
-        int foundWelded = -1;
-        for (int previous = 0; previous < vertexIndex; previous++)
-        {
-            int quantXPrev = (int)lroundf(mesh->vertices[3 * previous + 0] / 1e-5f);
-            int quantYPrev = (int)lroundf(mesh->vertices[3 * previous + 1] / 1e-5f);
-            int quantZPrev = (int)lroundf(mesh->vertices[3 * previous + 2] / 1e-5f);
-            if (quantX == quantXPrev && quantY == quantYPrev && quantZ == quantZPrev)
-            {
-                foundWelded = topology->weldedVertexId[previous];
-                break;
-            }
-        }
-        topology->weldedVertexId[vertexIndex] = (foundWelded >= 0) ? foundWelded : vertexIndex;
-    }
-
-    topology->weldedVerticesPerTriangle = (WeldedVertex *)malloc(sizeof(WeldedVertex) * 3 * topology->triangleCount);
-    for (int triangleIndex = 0; triangleIndex < topology->triangleCount; triangleIndex++)
-    {
-        unsigned short indexA                                         = topology->triangles[3 * triangleIndex + 0];
-        unsigned short indexB                                         = topology->triangles[3 * triangleIndex + 1];
-        unsigned short indexC                                         = topology->triangles[3 * triangleIndex + 2];
-        topology->weldedVerticesPerTriangle[3 * triangleIndex + 0].id = topology->weldedVertexId[indexA];
-        topology->weldedVerticesPerTriangle[3 * triangleIndex + 1].id = topology->weldedVertexId[indexB];
-        topology->weldedVerticesPerTriangle[3 * triangleIndex + 2].id = topology->weldedVertexId[indexC];
-    }
-
-    topology->neighborsPerTriangle = (int (*)[3])malloc(sizeof(int) * 3 * topology->triangleCount);
-    for (int triangleIndex = 0; triangleIndex < topology->triangleCount; triangleIndex++)
-        topology->neighborsPerTriangle[triangleIndex][0]     = topology->neighborsPerTriangle[triangleIndex][1] =
-            topology->neighborsPerTriangle[triangleIndex][2] = -1;
-
-    for (int triangleIndex = 0; triangleIndex < topology->triangleCount; triangleIndex++)
-    {
-        int edge0[2] = {
-            topology->weldedVerticesPerTriangle[3 * triangleIndex + 0].id,
-            topology->weldedVerticesPerTriangle[3 * triangleIndex + 1].id};
-        int edge1[2] = {
-            topology->weldedVerticesPerTriangle[3 * triangleIndex + 1].id,
-            topology->weldedVerticesPerTriangle[3 * triangleIndex + 2].id};
-        int edge2[2] = {
-            topology->weldedVerticesPerTriangle[3 * triangleIndex + 2].id,
-            topology->weldedVerticesPerTriangle[3 * triangleIndex + 0].id};
-
-        for (int otherTriangleIndex = triangleIndex + 1; otherTriangleIndex < topology->triangleCount;
-             otherTriangleIndex++)
-        {
-            int otherEdge0[2] = {
-                topology->weldedVerticesPerTriangle[3 * otherTriangleIndex + 0].id,
-                topology->weldedVerticesPerTriangle[3 * otherTriangleIndex + 1].id};
-            int otherEdge1[2] = {
-                topology->weldedVerticesPerTriangle[3 * otherTriangleIndex + 1].id,
-                topology->weldedVerticesPerTriangle[3 * otherTriangleIndex + 2].id};
-            int otherEdge2[2] = {
-                topology->weldedVerticesPerTriangle[3 * otherTriangleIndex + 2].id,
-                topology->weldedVerticesPerTriangle[3 * otherTriangleIndex + 0].id};
-
-            int weldedEdgePairsThis[3][2]  = {{edge0[0], edge0[1]}, {edge1[0], edge1[1]}, {edge2[0], edge2[1]}};
-            int weldedEdgePairsOther[3][2] = {
-                {otherEdge0[0], otherEdge0[1]}, {otherEdge1[0], otherEdge1[1]}, {otherEdge2[0], otherEdge2[1]}};
-
-            for (int edgeIndexThis = 0; edgeIndexThis < 3; edgeIndexThis++)
-                for (int edgeIndexOther = 0; edgeIndexOther < 3; edgeIndexOther++)
-                {
-                    int edge0VMin = weldedEdgePairsThis[edgeIndexThis][0];
-                    int edge0VMax = weldedEdgePairsThis[edgeIndexThis][1];
-                    if (edge0VMin > edge0VMax)
-                    {
-                        int swapVertex = edge0VMin;
-                        edge0VMin      = edge0VMax;
-                        edge0VMax      = swapVertex;
-                    }
-
-                    int edge1VMin = weldedEdgePairsOther[edgeIndexOther][0];
-                    int edge1VMax = weldedEdgePairsOther[edgeIndexOther][1];
-                    if (edge1VMin > edge1VMax)
-                    {
-                        int swapVertex = edge1VMin;
-                        edge1VMin      = edge1VMax;
-                        edge1VMax      = swapVertex;
-                    }
-
-                    if (edge0VMin == edge1VMin && edge0VMax == edge1VMax)
-                    {
-                        topology->neighborsPerTriangle[triangleIndex][edgeIndexThis]       = otherTriangleIndex;
-                        topology->neighborsPerTriangle[otherTriangleIndex][edgeIndexOther] = triangleIndex;
-                    }
-                }
-        }
-    }
-
-    topology->frontTrianglesFlag      = (unsigned char *)calloc(topology->triangleCount, 1);
-    topology->silhouetteTrianglesFlag = (unsigned char *)calloc(topology->triangleCount, 1);
-}
-
-static void topologyFrontTriangles(Topology *topology, float rotationRadians, Camera3D *observer)
-{
-    Vector3 los = observedLineOfSight(observer);
-    for (int triangleIndex = 0; triangleIndex < topology->triangleCount; triangleIndex++)
-    {
-        Vector3 triVerts[3] = {
-            topology->verticesPerTriangle[3 * triangleIndex + 0],
-            topology->verticesPerTriangle[3 * triangleIndex + 1],
-            topology->verticesPerTriangle[3 * triangleIndex + 2]};
-        rotateVerticesInPlaneSlice(triVerts, 3, rotationRadians);
-        Vector3 normal = triangleNormal(triVerts[0], triVerts[1], triVerts[2]);
-        if (Vector3DotProduct(normal, los) <= 0.0f)
-            topology->frontTrianglesFlag[triangleIndex] = 1;
-    }
-}
-
-static void topologySilhouetteTriangles(Topology *topology)
-{
-    for (int triangleIndex = 0; triangleIndex < topology->triangleCount; triangleIndex++)
-    {
-        for (int edgeIndex = 0; edgeIndex < 3; edgeIndex++)
-        {
-            int neighborTriangle = topology->neighborsPerTriangle[triangleIndex][edgeIndex];
-            if (neighborTriangle < 0)
-                continue;
-            if (topology->frontTrianglesFlag[triangleIndex] != topology->frontTrianglesFlag[neighborTriangle])
-            {
-                topology->silhouetteTrianglesFlag[triangleIndex]    = 1;
-                topology->silhouetteTrianglesFlag[neighborTriangle] = 1;
-            }
-        }
-    }
-}
-
 //----------------------------------------------------------------------------------
 // Near-plane intersection “disk” points
 //----------------------------------------------------------------------------------
@@ -1136,84 +885,85 @@ static Vector3 flipYInNearClipPlane(Vector3 intersectionCoord, Camera3D *observe
 {
     Vector3 los, right, up;
     observedBasis(observer, &los, &right, &up);
-    Vector3 centerNear  = Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
+    Vector3 centerNear = Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
     Vector3 toClipPlane = Vector3Subtract(intersectionCoord, centerNear);
-    float xComponent    = Vector3DotProduct(toClipPlane, right);
-    float yComponent    = Vector3DotProduct(toClipPlane, up);
+    float xComponent = Vector3DotProduct(toClipPlane, right);
+    float yComponent = Vector3DotProduct(toClipPlane, up);
     return Vector3Add(centerNear, Vector3Add(Vector3Scale(right, xComponent), Vector3Scale(up, -yComponent)));
 }
-
 static void drawNearPlaneIntersectionalDiskMesh(
     Camera3D *observer,
     float nearClipPlane,
-    Model *nearPlaneIntersectionalDiskModel,
+    const Mesh *srcMesh,
+    Model *nearPlaneIntersectionModel,
     Vector3 modelPosition,
     Vector3 modelScale,
     float meshRotationRadians,
-    Topology *topology,
     bool reflectYAxis)
 {
-    Mesh *diskMesh                  = &nearPlaneIntersectionalDiskModel->meshes[0];
-    int diskMeshCapacityVertexCount = diskMesh->vertexCount;
+    Mesh *diskMesh = &nearPlaneIntersectionModel->meshes[0];
+    int capacity = diskMesh->vertexCount;
+    int verticesWritten = 0;
 
-    int intersectionWriteIndex = 0;
-    for (int triangleIndex = 0; triangleIndex < topology->triangleCount; triangleIndex++)
+    Vector3 los = observedLineOfSight(observer);
+
+    for (int tri = 0; tri < srcMesh->triangleCount; tri++)
     {
-        if (!topology->frontTrianglesFlag[triangleIndex])
+        int ia = srcMesh->indices ? srcMesh->indices[3 * tri + 0] : 3 * tri + 0;
+        int ib = srcMesh->indices ? srcMesh->indices[3 * tri + 1] : 3 * tri + 1;
+        int ic = srcMesh->indices ? srcMesh->indices[3 * tri + 2] : 3 * tri + 2;
+
+        Vector3 A =
+            (Vector3){srcMesh->vertices[3 * ia + 0], srcMesh->vertices[3 * ia + 1], srcMesh->vertices[3 * ia + 2]};
+        Vector3 B =
+            (Vector3){srcMesh->vertices[3 * ib + 0], srcMesh->vertices[3 * ib + 1], srcMesh->vertices[3 * ib + 2]};
+        Vector3 C =
+            (Vector3){srcMesh->vertices[3 * ic + 0], srcMesh->vertices[3 * ic + 1], srcMesh->vertices[3 * ic + 2]};
+
+        A = applyModelTranslateRotateScale(A, modelPosition, modelScale, meshRotationRadians);
+        B = applyModelTranslateRotateScale(B, modelPosition, modelScale, meshRotationRadians);
+        C = applyModelTranslateRotateScale(C, modelPosition, modelScale, meshRotationRadians);
+
+        Vector3 n = triangleNormal(A, B, C);
+        if (Vector3DotProduct(n, los) > 0.0f)
             continue;
 
-        Vector3 triVerts[3] = {
-            topology->verticesPerTriangle[3 * triangleIndex + 0],
-            topology->verticesPerTriangle[3 * triangleIndex + 1],
-            topology->verticesPerTriangle[3 * triangleIndex + 2]};
-        rotateVerticesInPlaneSlice(triVerts, 3, meshRotationRadians);
+        Vector3 hits[3] = {
+            nearPlaneIntersection(observer, nearClipPlane, A),
+            nearPlaneIntersection(observer, nearClipPlane, B),
+            nearPlaneIntersection(observer, nearClipPlane, C)};
 
-        for (int localVertexIndex = 0; localVertexIndex < 3; localVertexIndex++)
+        for (int v = 0; v < 3 && verticesWritten < capacity; ++v)
         {
-            Vector3 scaledVertex = {
-                triVerts[localVertexIndex].x * modelScale.x,
-                triVerts[localVertexIndex].y * modelScale.y,
-                triVerts[localVertexIndex].z * modelScale.z};
-            Vector3 worldVertex       = Vector3Add(modelPosition, scaledVertex);
-            Vector3 intersectionCoord = nearPlaneIntersection(observer, nearClipPlane, worldVertex);
-            if (reflectYAxis)
-                intersectionCoord = flipYInNearClipPlane(intersectionCoord, observer, nearClipPlane);
+            Vector3 worldV = (Vector3[]){A, B, C}[v];
+            Vector3 hit = reflectYAxis ? flipYInNearClipPlane(hits[v], observer, nearClipPlane) : hits[v];
 
             rlSetLineWidth(1.0f);
-            DrawLine3D(worldVertex, intersectionCoord, (Color){255, 0, 0, 80});
+            DrawLine3D(worldV, hit, (Color){255, 0, 0, 80});
 
-            if (intersectionWriteIndex < diskMeshCapacityVertexCount)
-            {
-                diskMesh->vertices[3 * intersectionWriteIndex + 0] = intersectionCoord.x;
-                diskMesh->vertices[3 * intersectionWriteIndex + 1] = intersectionCoord.y;
-                diskMesh->vertices[3 * intersectionWriteIndex + 2] = intersectionCoord.z;
-                intersectionWriteIndex++;
-            }
+            diskMesh->vertices[3 * verticesWritten + 0] = hit.x;
+            diskMesh->vertices[3 * verticesWritten + 1] = hit.y;
+            diskMesh->vertices[3 * verticesWritten + 2] = hit.z;
+            verticesWritten++;
         }
     }
 
-    if (intersectionWriteIndex > 0)
-    {
-        diskMesh->vertexCount = intersectionWriteIndex;
-        UploadMesh(diskMesh, false);
-    }
+    diskMesh->vertexCount = verticesWritten;
+
     rlSetPointSize(6.0f);
-    DrawModelPoints(*nearPlaneIntersectionalDiskModel, (Vector3){0, 0, 0}, 1.0f, GREEN);
+    DrawModelPoints(*nearPlaneIntersectionModel, (Vector3){0, 0, 0}, 1.0f, GREEN);
 }
 
-static inline Vector3 remapNearPlaneByAspect(
-    Vector3 hit,
-    Vector3 centerNear,
-    Vector3 right,
-    Vector3 up,
-    float xScale)
+static inline Vector3 remapNearPlaneByAspect(Vector3 hit, Vector3 centerNear, Vector3 right, Vector3 up, float xScale)
 {
+    //TODO: this is gross, and naming of functions is not clear and this is just bad and not clear at all in the chornology of the pipeline didactic
     Vector3 d = Vector3Subtract(hit, centerNear);
-    float xr  = Vector3DotProduct(d, right);
-    float yu  = Vector3DotProduct(d, up);
+    float xr = Vector3DotProduct(d, right);
+    float yu = Vector3DotProduct(d, up);
     return Vector3Add(centerNear, Vector3Add(Vector3Scale(right, xr * xScale), Vector3Scale(up, yu)));
 }
 
+//TODO: this LITERALLY does not work. color UVs and TEXCOORDS are NOT THE SAME (this is a good demonstration of why that is so i think????
 static void perspectiveIncorrectColorDidactic(
     int screenWidth,
     int screenHeight,
@@ -1225,26 +975,17 @@ static void perspectiveIncorrectColorDidactic(
     float meshRotationRadians)
 {
     if (!mesh->colors)
-    {
-        TraceLog(LOG_ERROR, "perspectiveIncorrectColorDidactic: mesh->colors is NULL. Fill per-vertex colors first.");
-        return;
-    }
+        applyBarycentricPalette(
+            mesh); //TODO: remove this and just be more clear about toggling behavior idempotency or something
 
     float aspect = (float)screenWidth / (float)screenHeight;
-
     Vector3 los, right, up;
     observedBasis(observer, &los, &right, &up);
 
-    Vector3 centerNear   = Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
-    float halfFovy       = DEG2RAD * observer->fovy * 0.5f;
-    float halfHeightNear = nearClipPlane * tanf(halfFovy);
-    (void)halfHeightNear;
-
-    float xScale         = ANISOTROPIC() ? 1.0f : (1.0f / aspect);
-    const float shiftEps = 0.0001f;
+    Vector3 centerNear = Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
+    float xScale = ANISOTROPIC() ? 1.0f : (1.0f / aspect);
 
     rlDisableTexture();
-    rlEnableColorBlend();
     rlBegin(RL_TRIANGLES);
 
     for (int tri = 0; tri < mesh->triangleCount; tri++)
@@ -1253,9 +994,9 @@ static void perspectiveIncorrectColorDidactic(
         int ib = mesh->indices ? mesh->indices[3 * tri + 1] : 3 * tri + 1;
         int ic = mesh->indices ? mesh->indices[3 * tri + 2] : 3 * tri + 2;
 
-        Vector3 A = {mesh->vertices[3 * ia + 0], mesh->vertices[3 * ia + 1], mesh->vertices[3 * ia + 2]};
-        Vector3 B = {mesh->vertices[3 * ib + 0], mesh->vertices[3 * ib + 1], mesh->vertices[3 * ib + 2]};
-        Vector3 C = {mesh->vertices[3 * ic + 0], mesh->vertices[3 * ic + 1], mesh->vertices[3 * ic + 2]};
+        Vector3 A = (Vector3){mesh->vertices[3 * ia + 0], mesh->vertices[3 * ia + 1], mesh->vertices[3 * ia + 2]};
+        Vector3 B = (Vector3){mesh->vertices[3 * ib + 0], mesh->vertices[3 * ib + 1], mesh->vertices[3 * ib + 2]};
+        Vector3 C = (Vector3){mesh->vertices[3 * ic + 0], mesh->vertices[3 * ic + 1], mesh->vertices[3 * ic + 2]};
 
         A = applyModelTranslateRotateScale(A, modelPosition, modelScale, meshRotationRadians);
         B = applyModelTranslateRotateScale(B, modelPosition, modelScale, meshRotationRadians);
@@ -1265,24 +1006,20 @@ static void perspectiveIncorrectColorDidactic(
         Vector3 hitB = nearPlaneIntersection(observer, nearClipPlane, B);
         Vector3 hitC = nearPlaneIntersection(observer, nearClipPlane, C);
 
-        Vector3 planeApos = remapNearPlaneByAspect(hitA, centerNear, right, up, xScale);
-        Vector3 planeBpos = remapNearPlaneByAspect(hitB, centerNear, right, up, xScale);
-        Vector3 planeCpos = remapNearPlaneByAspect(hitC, centerNear, right, up, xScale);
-
-        Vector3 planeA = Vector3Add(planeApos, Vector3Scale(los, shiftEps));
-        Vector3 planeB = Vector3Add(planeBpos, Vector3Scale(los, shiftEps));
-        Vector3 planeC = Vector3Add(planeCpos, Vector3Scale(los, shiftEps));
+        Vector3 pA = remapNearPlaneByAspect(hitA, centerNear, right, up, xScale);
+        Vector3 pB = remapNearPlaneByAspect(hitB, centerNear, right, up, xScale);
+        Vector3 pC = remapNearPlaneByAspect(hitC, centerNear, right, up, xScale);
 
         const unsigned char *cA = &mesh->colors[4 * ia];
         const unsigned char *cB = &mesh->colors[4 * ib];
         const unsigned char *cC = &mesh->colors[4 * ic];
 
         rlColor4ub(cA[0], cA[1], cA[2], cA[3]);
-        rlVertex3f(planeA.x, planeA.y, planeA.z);
+        rlVertex3f(pA.x, pA.y, pA.z);
         rlColor4ub(cB[0], cB[1], cB[2], cB[3]);
-        rlVertex3f(planeB.x, planeB.y, planeB.z);
+        rlVertex3f(pB.x, pB.y, pB.z);
         rlColor4ub(cC[0], cC[1], cC[2], cC[3]);
-        rlVertex3f(planeC.x, planeC.y, planeC.z);
+        rlVertex3f(pC.x, pC.y, pC.z);
     }
 
     rlEnd();
@@ -1306,12 +1043,8 @@ static void perspectiveIncorrectProjectionDidactic(
     Vector3 los, right, up;
     observedBasis(observer, &los, &right, &up);
 
-    Vector3 centerNear   = Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
-    float halfFovy       = DEG2RAD * observer->fovy * 0.5f;
-    float halfHeightNear = nearClipPlane * tanf(halfFovy);
-    float halfWidthNear  = ANISOTROPIC() ? (halfHeightNear * aspect) : halfHeightNear;
-
-    float xScale = ANISOTROPIC() ? 1.0f : (1.0f / aspect); // squeeze X in ISO mode
+    Vector3 centerNear = Vector3Add(observer->position, Vector3Scale(los, nearClipPlane));
+    float xScale = ANISOTROPIC() ? 1.0f : (1.0f / aspect);
 
     rlColor4f(1, 1, 1, 1);
     rlEnableTexture(texture.id);
@@ -1324,12 +1057,12 @@ static void perspectiveIncorrectProjectionDidactic(
         int indexB = mesh->indices ? mesh->indices[3 * triangleIndex + 1] : 3 * triangleIndex + 1;
         int indexC = mesh->indices ? mesh->indices[3 * triangleIndex + 2] : 3 * triangleIndex + 2;
 
-        Vector3 vertexA = {
-            mesh->vertices[3 * indexA + 0], mesh->vertices[3 * indexA + 1], mesh->vertices[3 * indexA + 2]};
-        Vector3 vertexB = {
-            mesh->vertices[3 * indexB + 0], mesh->vertices[3 * indexB + 1], mesh->vertices[3 * indexB + 2]};
-        Vector3 vertexC = {
-            mesh->vertices[3 * indexC + 0], mesh->vertices[3 * indexC + 1], mesh->vertices[3 * indexC + 2]};
+        Vector3 vertexA =
+            (Vector3){mesh->vertices[3 * indexA + 0], mesh->vertices[3 * indexA + 1], mesh->vertices[3 * indexA + 2]};
+        Vector3 vertexB =
+            (Vector3){mesh->vertices[3 * indexB + 0], mesh->vertices[3 * indexB + 1], mesh->vertices[3 * indexB + 2]};
+        Vector3 vertexC =
+            (Vector3){mesh->vertices[3 * indexC + 0], mesh->vertices[3 * indexC + 1], mesh->vertices[3 * indexC + 2]};
 
         vertexA = applyModelTranslateRotateScale(vertexA, modelPosition, modelScale, meshRotationRadians);
         vertexB = applyModelTranslateRotateScale(vertexB, modelPosition, modelScale, meshRotationRadians);
@@ -1339,14 +1072,9 @@ static void perspectiveIncorrectProjectionDidactic(
         Vector3 hitB = nearPlaneIntersection(observer, nearClipPlane, vertexB);
         Vector3 hitC = nearPlaneIntersection(observer, nearClipPlane, vertexC);
 
-        const float shiftEps = 0.0001f;
-        Vector3 planeApos    = remapNearPlaneByAspect(hitA, centerNear, right, up, xScale);
-        Vector3 planeBpos    = remapNearPlaneByAspect(hitB, centerNear, right, up, xScale);
-        Vector3 planeCpos    = remapNearPlaneByAspect(hitC, centerNear, right, up, xScale);
-
-        Vector3 planeA = Vector3Add(planeApos, Vector3Scale(los, shiftEps));
-        Vector3 planeB = Vector3Add(planeBpos, Vector3Scale(los, shiftEps));
-        Vector3 planeC = Vector3Add(planeCpos, Vector3Scale(los, shiftEps));
+        Vector3 planeApos = remapNearPlaneByAspect(hitA, centerNear, right, up, xScale);
+        Vector3 planeBpos = remapNearPlaneByAspect(hitB, centerNear, right, up, xScale);
+        Vector3 planeCpos = remapNearPlaneByAspect(hitC, centerNear, right, up, xScale);
 
         float uA = mesh->texcoords ? mesh->texcoords[2 * indexA + 0] : 0.0f;
         float vA = mesh->texcoords ? mesh->texcoords[2 * indexA + 1] : 0.0f;
@@ -1356,11 +1084,11 @@ static void perspectiveIncorrectProjectionDidactic(
         float vC = mesh->texcoords ? mesh->texcoords[2 * indexC + 1] : 0.0f;
 
         rlTexCoord2f(uA, vA);
-        rlVertex3f(planeA.x, planeA.y, planeA.z);
+        rlVertex3f(planeApos.x, planeApos.y, planeApos.z);
         rlTexCoord2f(uB, vB);
-        rlVertex3f(planeB.x, planeB.y, planeB.z);
+        rlVertex3f(planeBpos.x, planeBpos.y, planeBpos.z);
         rlTexCoord2f(uC, vC);
-        rlVertex3f(planeC.x, planeC.y, planeC.z);
+        rlVertex3f(planeCpos.x, planeCpos.y, planeCpos.z);
     }
 
     rlEnd();
@@ -1372,55 +1100,37 @@ static void perspectiveIncorrectProjectionDidactic(
 //----------------------------------------------------------------------------------
 static void applyBarycentricPalette(Mesh *mesh)
 {
+    if (!mesh || mesh->vertexCount <= 0 || mesh->triangleCount <= 0)
+        return;
+
     if (mesh->colors == NULL)
-    {
         mesh->colors = (unsigned char *)RL_CALLOC(mesh->vertexCount * 4, sizeof(unsigned char));
-    }
-    for (int triangleIndex = 0; triangleIndex < mesh->triangleCount; triangleIndex++)
+    //TODO: fix all shorthand variable naming throughout the whole code, this is not good, and not consistent please
+    for (int tri = 0; tri < mesh->triangleCount; tri++)
     {
-        int indexA = mesh->indices ? mesh->indices[3 * triangleIndex + 0] : 3 * triangleIndex + 0;
-        int indexB = mesh->indices ? mesh->indices[3 * triangleIndex + 1] : 3 * triangleIndex + 1;
-        int indexC = mesh->indices ? mesh->indices[3 * triangleIndex + 2] : 3 * triangleIndex + 2;
+        int ia = mesh->indices ? mesh->indices[3 * tri + 0] : 3 * tri + 0;
+        int ib = mesh->indices ? mesh->indices[3 * tri + 1] : 3 * tri + 1;
+        int ic = mesh->indices ? mesh->indices[3 * tri + 2] : 3 * tri + 2;
 
-        mesh->colors[4 * indexA + 0] = 255;
-        mesh->colors[4 * indexA + 1] = 0;
-        mesh->colors[4 * indexA + 2] = 0;
-        mesh->colors[4 * indexA + 3] = 255;
-        mesh->colors[4 * indexB + 0] = 0;
-        mesh->colors[4 * indexB + 1] = 255;
-        mesh->colors[4 * indexB + 2] = 0;
-        mesh->colors[4 * indexB + 3] = 255;
-        mesh->colors[4 * indexC + 0] = 0;
-        mesh->colors[4 * indexC + 1] = 0;
-        mesh->colors[4 * indexC + 2] = 255;
-        mesh->colors[4 * indexC + 3] = 255;
+        //TODO: can we more cleanly achieve this? like i just want to set a color like = RED = GREEN = BLUE, i dont want ot fuck with pointer offsets and arrays...
+        // A -> Red
+        mesh->colors[4 * ia + 0] = 255;
+        mesh->colors[4 * ia + 1] = 0;
+        mesh->colors[4 * ia + 2] = 0;
+        mesh->colors[4 * ia + 3] = 255;
+
+        // B -> Green
+        mesh->colors[4 * ib + 0] = 0;
+        mesh->colors[4 * ib + 1] = 255;
+        mesh->colors[4 * ib + 2] = 0;
+        mesh->colors[4 * ib + 3] = 255;
+
+        // C -> Blue
+        mesh->colors[4 * ic + 0] = 0;
+        mesh->colors[4 * ic + 1] = 0;
+        mesh->colors[4 * ic + 2] = 255;
+        mesh->colors[4 * ic + 3] = 255;
     }
-
-    if (mesh->texcoords == NULL)
-    {
-        mesh->texcoords = (float *)RL_CALLOC(mesh->vertexCount * 2, sizeof(float));
-    }
-    for (int triangleIndex = 0; triangleIndex < mesh->triangleCount; triangleIndex++)
-    {
-        int indexA = mesh->indices ? mesh->indices[3 * triangleIndex + 0] : 3 * triangleIndex + 0;
-        int indexB = mesh->indices ? mesh->indices[3 * triangleIndex + 1] : 3 * triangleIndex + 1;
-        int indexC = mesh->indices ? mesh->indices[3 * triangleIndex + 2] : 3 * triangleIndex + 2;
-
-        mesh->texcoords[2 * indexA + 0] = 1.0f;
-        mesh->texcoords[2 * indexA + 1] = 0.0f;
-        mesh->texcoords[2 * indexB + 0] = 0.0f;
-        mesh->texcoords[2 * indexB + 1] = 1.0f;
-        mesh->texcoords[2 * indexC + 0] = 0.0f;
-        mesh->texcoords[2 * indexC + 1] = 0.0f;
-    }
-
-    UploadMesh(mesh, false);
-}
-
-static void drawQuad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color color)
-{
-    DrawTriangle3D(a, b, c, color);
-    DrawTriangle3D(a, c, d, color);
 }
 
 //----------------------------------------------------------------------------------
@@ -1430,13 +1140,13 @@ static bool moveJugemuOrbital(Camera3D *jugemu, float deltaTime)
 {
     Vector3 previousPosition = jugemu->position;
 
-    float radius           = Vector3Length(jugemu->position);
-    float azimuth          = atan2f(jugemu->position.z, jugemu->position.x);
+    float radius = Vector3Length(jugemu->position);
+    float azimuth = atan2f(jugemu->position.z, jugemu->position.x);
     float horizontalRadius = sqrtf(jugemu->position.x * jugemu->position.x + jugemu->position.z * jugemu->position.z);
-    float elevation        = atan2f(jugemu->position.y, horizontalRadius);
+    float elevation = atan2f(jugemu->position.y, horizontalRadius);
 
     const float LONG_SPEED = 1.5f;
-    const float LAT_SPEED  = 1.0f;
+    const float LAT_SPEED = 1.0f;
     const float ZOOM_SPEED = 2.0f;
     const float ROLL_SPEED = 2.0f;
 
@@ -1460,22 +1170,22 @@ static bool moveJugemuOrbital(Camera3D *jugemu, float deltaTime)
         rollDeltaRadians += ROLL_SPEED * deltaTime;
     if (IsKeyPressed(KEY_SPACE))
     {
-        jugemu->up       = (Vector3){0, 1, 0};
+        jugemu->up = (Vector3){0, 1, 0};
         rollDeltaRadians = 0.0f;
     }
 
-    radius          = Clamp(radius, 0.25f, 25.0f);
+    radius = Clamp(radius, 0.25f, 25.0f);
     const float EPS = 0.0001f;
-    elevation       = Clamp(elevation, -PI * 0.5f + EPS, PI * 0.5f - EPS);
+    elevation = Clamp(elevation, -PI * 0.5f + EPS, PI * 0.5f - EPS);
 
     jugemu->position.x = radius * cosf(elevation) * cosf(azimuth);
     jugemu->position.y = radius * sinf(elevation);
     jugemu->position.z = radius * cosf(elevation) * sinf(azimuth);
 
     Vector3 viewDir = Vector3Normalize(Vector3Subtract((Vector3){0, 0, 0}, jugemu->position));
-    Vector3 upRot   = rotatePointAboutAxis(jugemu->up, (Vector3){0, 0, 0}, viewDir, rollDeltaRadians);
-    jugemu->target  = (Vector3){0, 0, 0};
-    jugemu->up      = Vector3Normalize(upRot);
+    Vector3 upRot = rotatePointAboutAxis(jugemu->up, (Vector3){0, 0, 0}, viewDir, rollDeltaRadians);
+    jugemu->target = (Vector3){0, 0, 0};
+    jugemu->up = Vector3Normalize(upRot);
 
     return (previousPosition.x != jugemu->position.x) || (previousPosition.y != jugemu->position.y) ||
            (previousPosition.z != jugemu->position.z);
