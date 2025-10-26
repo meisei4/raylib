@@ -39,37 +39,28 @@ static unsigned int gFlags = FLAG_ASPECT | FLAG_COLOR_MODE;
     } while (0)
 
 static void drawBasisVector(Camera3D *main);
-
-static Mesh spatialWire = {0};
-static Model spatialWireModel = {0};
-static void updateSpatialWire(Camera3D *main, float aspect, float near, float far);
-static void drawSpatialWire(Camera3D *main, float aspect, float near, float far);
-
-static Mesh nearPlaneQuad = {0};       //TODO: does this need to be global really?
-static Model nearPlaneQuadModel = {0}; //TODO: does this need to be global really?
-static void buildNearPlaneQuad(void);
-static void updateNearPlaneQuad(Camera3D *main, float aspect, float near);
-static void drawNearPlane(Camera3D *main, float aspect, float near, Mesh *mesh, Texture2D texture, float rotation);
-
+static void updateSpatialWire(Camera3D *main, float aspect, float near, float far, Mesh *spatialWire);
+static void drawSpatialWire(Mesh spatialWire);
+static void showOnlyFrontFace(Mesh *mesh);
 static void drawModelFilled(Model *model, Texture2D texture, float rotation);
 static void drawWiresAndPoints(Model *model, float rotation);
 
 static int nearPlanePointsCapacity = 0; //TODO: does this need to be global really?
 static void drawNearPlanePoints(Camera3D *main, float near, Model *nearPlanePointsModel, Mesh *mesh, float rotation, bool flipY);
+static void drawNearPlane(
+    Camera3D *main, float aspect, float near, Model spatialWireModel, Mesh *mesh, Texture2D meshTexture, Texture2D perspectiveCorrectTexture, float rotation);
 
 static void worldToNDCSpace(Camera3D *main, float aspect, float near, float far, Model *world, Model *ndc, float rotation);
 
-static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near, Mesh *mesh, Texture2D texture, float rotation);
-
-static Texture2D perspectiveCorrectTexture = {0}; //TODO: does this need to be global really?
-static void perspectiveCorrectCapture(Camera3D *main, Model *model, Texture2D texture, float rotation);
+static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near, Mesh *mesh, Texture2D meshTexture, float rotation);
+static void perspectiveCorrectCapture(Camera3D *main, Model *model, Texture2D meshTexture, Texture2D *perspectiveCorrectTexture, float rotation);
 static void alphaMaskPunchOut(Image *rgba, const Image *mask, unsigned char threshold);
 static void fillVertexColors(Mesh *mesh);
 static void moveJugemuOrbital(Camera3D *jugemu, float deltaTime);
 
 int main(void)
 {
-    InitWindow(WIDTH, HEIGHT, "fixed function");
+    InitWindow(WIDTH, HEIGHT, "fixed function didactic");
     SetTargetFPS(60);
 
     Camera3D main = {0};
@@ -91,8 +82,8 @@ int main(void)
     jugemu.projection = CAMERA_PERSPECTIVE;
 
     float meshRotation = 0.0f;
-    Mesh cubeMesh = GenMeshCube(1.0f, 1.0f, 1.0f);
-    Model worldModel = LoadModelFromMesh(cubeMesh);
+    Model worldModel = LoadModelFromMesh(GenMeshCube(1.0f, 1.0f, 1.0f));
+    // Model worldModel = LoadModelFromMesh(GenMeshKnot(1.0f, 1.0f, 16, 128));
 
     Mesh ndcMesh = (Mesh){0};
     ndcMesh.vertexCount = worldModel.meshes[0].vertexCount;
@@ -113,18 +104,18 @@ int main(void)
     Model nearPlanePointsModel = LoadModelFromMesh(nearPlanePoints);
 
     Image checkeredImage = GenImageChecked(16, 16, 4, 4, BLACK, WHITE);
-    Texture2D texture = LoadTextureFromImage(checkeredImage);
+    Texture2D checkeredTexture = LoadTextureFromImage(checkeredImage);
     UnloadImage(checkeredImage);
 
-    worldModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = texture;
+    worldModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = checkeredTexture;
     fillVertexColors(&worldModel.meshes[0]);
-    ndcModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = texture;
+    ndcModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = checkeredTexture;
     fillVertexColors(&ndcModel.meshes[0]);
 
-    buildNearPlaneQuad();
-    spatialWire = GenMeshCube(1.0f, 1.0f, 1.0f);
-    spatialWireModel = LoadModelFromMesh(spatialWire);
-
+    Texture2D perspectiveCorrectTexture = {0}; //TODO: still wacky to do this and pass by reference everywhere i dont like it... its not neccessary
+    Mesh spatialWire = GenMeshCube(1.0f, 1.0f, 1.0f);
+    showOnlyFrontFace(&spatialWire);
+    Model spatialWireModel = LoadModelFromMesh(spatialWire);
     while (!WindowShouldClose())
     {
         aspect = (float)GetScreenWidth() / (float)GetScreenHeight();
@@ -142,16 +133,18 @@ int main(void)
         if (NDC_SPACE()) worldToNDCSpace(&main, aspect, near, far, &worldModel, &ndcModel, meshRotation);
 
         BeginDrawing();
-        if (TEXTURE_MODE() && PERSPECTIVE_CORRECT()) perspectiveCorrectCapture(&main, capturedModel, texture, meshRotation);
+        if (PERSPECTIVE_CORRECT() && TEXTURE_MODE())
+            perspectiveCorrectCapture(&main, capturedModel, checkeredTexture, &perspectiveCorrectTexture, meshRotation);
         ClearBackground(BLACK);
 
         BeginMode3D(jugemu);
         drawBasisVector(&main);
-        drawSpatialWire(&main, ANISOTROPIC() ? aspect : 1.0f, near, far);
-        drawModelFilled(capturedModel, texture, meshRotation);
+        updateSpatialWire(&main, ANISOTROPIC() ? aspect : 1.0f, near, far, &spatialWire);
+        drawSpatialWire(spatialWire);
+        drawModelFilled(capturedModel, checkeredTexture, meshRotation);
         drawWiresAndPoints(capturedModel, meshRotation);
         drawNearPlanePoints(&main, near, &nearPlanePointsModel, capturedMesh, meshRotation, NDC_SPACE());
-        drawNearPlane(&main, aspect, near, capturedMesh, texture, meshRotation);
+        drawNearPlane(&main, ANISOTROPIC() ? aspect : 1.0f, near, spatialWireModel, capturedMesh, checkeredTexture, perspectiveCorrectTexture, meshRotation);
         EndMode3D();
 
         DrawText("Arrows/WASD: move camera | R: reset camera | Spacebar: pause", 12, 40, 20, WHITE);
@@ -173,9 +166,22 @@ int main(void)
     UnloadModel(ndcModel);
     UnloadModel(nearPlanePointsModel);
     UnloadModel(spatialWireModel);
-    UnloadTexture(texture);
+    UnloadTexture(checkeredTexture);
     CloseWindow();
     return 0;
+}
+
+static void showOnlyFrontFace(Mesh *mesh)
+{
+    if (!mesh->colors) mesh->colors = (unsigned char *)RL_CALLOC(mesh->vertexCount, sizeof(Color));
+    Color *colors = (Color *)mesh->colors;
+    for (int i = 0; i < mesh->vertexCount; i++)
+        colors[i] = (Color){255, 255, 255, 0};
+    //first 4 indices is the front face of the mesh
+    for (int i = 0; i < 4; i++)
+    {
+        colors[i].a = 255;
+    }
 }
 
 static void basisVector(Camera3D *main, Vector3 *losOut, Vector3 *rightOut, Vector3 *upOut)
@@ -197,14 +203,7 @@ static void drawBasisVector(Camera3D *main)
     DrawLine3D(main->position, Vector3Add(main->position, los), SKYBLUE);
 }
 
-static void drawSpatialWire(Camera3D *main, float aspect, float near, float far)
-{
-    updateSpatialWire(main, aspect, near, far);
-    rlSetLineWidth(2.0f);
-    DrawModelWiresEx(spatialWireModel, (Vector3){0, 0, 0}, (Vector3){0, 1, 0}, 0.0f, (Vector3){1, 1, 1}, WHITE);
-}
-
-static void updateSpatialWire(Camera3D *main, float aspect, float near, float far)
+static void updateSpatialWire(Camera3D *main, float aspect, float near, float far, Mesh *spatialWire)
 {
     Vector3 los, right, up;
     basisVector(main, &los, &right, &up);
@@ -213,47 +212,48 @@ static void updateSpatialWire(Camera3D *main, float aspect, float near, float fa
     float halfWNear = ANISOTROPIC() ? (halfHNear * aspect) : halfHNear;
     float halfHFar = far * tanf(halfFovy);
     float halfWFar = ANISOTROPIC() ? (halfHFar * aspect) : halfHFar;
-
     Vector3 centerNear = Vector3Add(main->position, Vector3Scale(los, near));
-    //TODO:why the fuck is this so convoluted? like halfing, subtracting the same shit, and then continnuing to redouble something and then half it again????
-    float halfDepthNDC = ANISOTROPIC() ? (0.5f * (far - near)) : halfHNear;
-    float depthSpan = NDC_SPACE() ? (2.0f * halfDepthNDC) : (far - near);
-    float halfSpan = 0.5f * depthSpan;
+    float halfDepth = NDC_SPACE() ? (ANISOTROPIC() ? (0.5f * (far - near)) : halfHNear) : (0.5f * (far - near));
+    float depthSpan = 2.0f * halfDepth;
     float farHalfW = NDC_SPACE() ? halfWNear : halfWFar;
     float farHalfH = NDC_SPACE() ? halfHNear : halfHFar;
 
-    for (int i = 0; i < spatialWire.vertexCount; ++i)
+    for (int i = 0; i < spatialWire->vertexCount; ++i)
     {
-        Vector3 vertex = (Vector3){spatialWire.vertices[3 * i + 0], spatialWire.vertices[3 * i + 1], spatialWire.vertices[3 * i + 2]};
-        //TODO:wtf is this naming?
-        Vector3 rel = Vector3Subtract(vertex, centerNear);
-        float xSign = (Vector3DotProduct(rel, right) >= 0.0f) ? 1.0f : -1.0f;
-        float ySign = (Vector3DotProduct(rel, up) >= 0.0f) ? 1.0f : -1.0f;
-        //TODO:wtf is this naming?
-        float s = (Vector3DotProduct(rel, los) > halfSpan) ? 1.0f : 0.0f;
-        //TODO:wtf is this?
-        float halfW = halfWNear + s * (farHalfW - halfWNear);
-        float halfH = halfHNear + s * (farHalfH - halfHNear);
-
-        Vector3 faceCenter = Vector3Add(centerNear, Vector3Scale(los, s * depthSpan));
-        Vector3 result = Vector3Add(faceCenter, Vector3Add(Vector3Scale(right, xSign * halfW), Vector3Scale(up, ySign * halfH)));
-
-        spatialWire.vertices[3 * i + 0] = result.x;
-        spatialWire.vertices[3 * i + 1] = result.y;
-        spatialWire.vertices[3 * i + 2] = result.z;
+        Vector3 vertex = (Vector3){spatialWire->vertices[3 * i + 0], spatialWire->vertices[3 * i + 1], spatialWire->vertices[3 * i + 2]};
+        Vector3 offset = Vector3Subtract(vertex, centerNear);
+        float xSign = (Vector3DotProduct(offset, right) >= 0.0f) ? 1.0f : -1.0f;
+        float ySign = (Vector3DotProduct(offset, up) >= 0.0f) ? 1.0f : -1.0f;
+        float farMask = (Vector3DotProduct(offset, los) > halfDepth) ? 1.0f : 0.0f;
+        float finalHalfWidth = halfWNear + farMask * (farHalfW - halfWNear);
+        float finalHalfHeight = halfHNear + farMask * (farHalfH - halfHNear);
+        Vector3 faceCenter = Vector3Add(centerNear, Vector3Scale(los, farMask * depthSpan));
+        Vector3 result = Vector3Add(faceCenter, Vector3Add(Vector3Scale(right, xSign * finalHalfWidth), Vector3Scale(up, ySign * finalHalfHeight)));
+        spatialWire->vertices[3 * i + 0] = result.x;
+        spatialWire->vertices[3 * i + 1] = result.y;
+        spatialWire->vertices[3 * i + 2] = result.z;
     }
 }
 
-static void drawNearPlane(Camera3D *main, float aspect, float near, Mesh *mesh, Texture2D texture, float rotation)
+static void drawSpatialWire(Mesh spatialWire)
 {
-    if (PERSPECTIVE_CORRECT() && TEXTURE_MODE())
-    {
-        updateNearPlaneQuad(main, aspect, near);
-        nearPlaneQuadModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = perspectiveCorrectTexture;
-        DrawModel(nearPlaneQuadModel, (Vector3){0, 0, 0}, 1.0f, WHITE);
-        return;
-    }
-    perspectiveIncorrectCapture(main, aspect, near, mesh, texture, rotation);
+    //DrawModelWiresEx(spatialWireModel, MODEL_POS, (Vector3){0, 1, 0}, 0.0f, MODEL_SCALE, WHITE);
+    static const int frontFace[4][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}};
+    static const int backFace[4][2] = {{4, 5}, {5, 6}, {6, 7}, {7, 4}};
+    static const int connectingFaces[4][2] = {{0, 4}, {1, 7}, {2, 6}, {3, 5}};
+    static const int (*faces[3])[2] = {frontFace, backFace, connectingFaces};
+
+    rlSetLineWidth(2.0f);
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 4; j++)
+        {
+            const int (*edges)[2] = faces[i];
+            int edgeIndexA = edges[j][0] * 3;
+            int edgeIndexB = edges[j][1] * 3;
+            Vector3 startPosition = {spatialWire.vertices[edgeIndexA + 0], spatialWire.vertices[edgeIndexA + 1], spatialWire.vertices[edgeIndexA + 2]};
+            Vector3 endPosition = {spatialWire.vertices[edgeIndexB + 0], spatialWire.vertices[edgeIndexB + 1], spatialWire.vertices[edgeIndexB + 2]};
+            DrawLine3D(startPosition, endPosition, WHITE);
+        }
 }
 
 static void drawModelFilled(Model *model, Texture2D texture, float rotation)
@@ -276,8 +276,8 @@ static void drawWiresAndPoints(Model *model, float rotation)
     model->meshes[0].colors = NULL;
     rlSetLineWidth(2.0f);
     DrawModelWiresEx(*model, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * rotation, MODEL_SCALE, BLUE);
-    rlSetPointSize(8.0f);
-    DrawModelPointsEx(*model, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * rotation, MODEL_SCALE, MAGENTA);
+    // rlSetPointSize(8.0f);
+    // DrawModelPointsEx(*model, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * rotation, MODEL_SCALE, MAGENTA);
     model->meshes[0].colors = cacheColors;
 }
 
@@ -361,8 +361,20 @@ static void drawNearPlanePoints(Camera3D *main, float near, Model *nearPlanePoin
     }
 
     nearPlanePointsMesh->vertexCount = writtenVertices;
-    rlSetPointSize(6.0f);
-    DrawModelPoints(*nearPlanePointsModel, (Vector3){0, 0, 0}, 1.0f, MAGENTA);
+    // rlSetPointSize(6.0f);
+    // DrawModelPoints(*nearPlanePointsModel, MODEL_POS, 1.0f, MAGENTA);
+}
+
+static void drawNearPlane(
+    Camera3D *main, float aspect, float near, Model spatialWireModel, Mesh *mesh, Texture2D meshTexture, Texture2D perspectiveCorrectTexture, float rotation)
+{
+    if (PERSPECTIVE_CORRECT() && TEXTURE_MODE())
+    {
+        spatialWireModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = perspectiveCorrectTexture;
+        DrawModel(spatialWireModel, MODEL_POS, 1.0f, WHITE);
+        return;
+    }
+    perspectiveIncorrectCapture(main, aspect, near, mesh, meshTexture, rotation);
 }
 
 //TODO: this has to exist somewhere in raylib math right???
@@ -419,53 +431,6 @@ static void worldToNDCSpace(Camera3D *main, float aspect, float near, float far,
     }
 }
 
-static void buildNearPlaneQuad(void)
-{
-    //TODO: why is this having to be called every frame anyways? just make the quad and thats it i thought.
-    if (nearPlaneQuad.vertexCount > 0 && nearPlaneQuadModel.meshCount > 0) return;
-
-    nearPlaneQuad = (Mesh){0};
-    nearPlaneQuad.vertexCount = 4;
-    nearPlaneQuad.triangleCount = 2;
-    nearPlaneQuad.vertices = (float *)RL_CALLOC(4 * 3, sizeof(float));
-    nearPlaneQuad.texcoords = (float *)RL_CALLOC(4 * 2, sizeof(float));
-    nearPlaneQuad.indices = (unsigned short *)RL_CALLOC(6, sizeof(unsigned short));
-    float texcoords[8] = {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f};
-    memcpy(nearPlaneQuad.texcoords, texcoords, sizeof(texcoords));
-    unsigned short indices[6] = {0, 2, 1, 0, 3, 2};
-    memcpy(nearPlaneQuad.indices, indices, sizeof(indices));
-    nearPlaneQuadModel = LoadModelFromMesh(nearPlaneQuad);
-}
-
-static void updateNearPlaneQuad(Camera3D *main, float aspect, float near)
-{
-    //TODO: why is this having to be called every frame anyways? for aspect? why do we have to do this redundantly? just update only when needed?
-    Vector3 los, right, up;
-    basisVector(main, &los, &right, &up);
-    float halfFovy = DEG2RAD * main->fovy * 0.5f;
-    float halfH = near * tanf(halfFovy);
-    float halfW = ANISOTROPIC() ? (halfH * aspect) : halfH;
-    Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(los, near));
-    Vector3 a = Vector3Add(centerNearPlane, Vector3Add(Vector3Scale(up, +halfH), Vector3Scale(right, -halfW)));
-    Vector3 b = Vector3Add(centerNearPlane, Vector3Add(Vector3Scale(up, +halfH), Vector3Scale(right, +halfW)));
-    Vector3 c = Vector3Add(centerNearPlane, Vector3Add(Vector3Scale(up, -halfH), Vector3Scale(right, +halfW)));
-    Vector3 d = Vector3Add(centerNearPlane, Vector3Add(Vector3Scale(up, -halfH), Vector3Scale(right, -halfW)));
-
-    float *v = nearPlaneQuad.vertices;
-    v[0] = a.x;
-    v[1] = a.y;
-    v[2] = a.z;
-    v[3] = b.x;
-    v[4] = b.y;
-    v[5] = b.z;
-    v[6] = c.x;
-    v[7] = c.y;
-    v[8] = c.z;
-    v[9] = d.x;
-    v[10] = d.y;
-    v[11] = d.z;
-}
-
 static Vector3 aspectCorrectNearPlane(Vector3 hit, Vector3 center, Vector3 right, Vector3 up, float xScale)
 {
     Vector3 centerDistance = Vector3Subtract(hit, center);
@@ -474,17 +439,23 @@ static Vector3 aspectCorrectNearPlane(Vector3 hit, Vector3 center, Vector3 right
     return Vector3Add(center, Vector3Add(Vector3Scale(right, xRight * xScale), Vector3Scale(up, yUp)));
 }
 
-static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near, Mesh *mesh, Texture2D texture, float rotation)
+static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near, Mesh *mesh, Texture2D meshTexture, float rotation)
 {
     Vector3 los, right, up;
     basisVector(main, &los, &right, &up);
     Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(los, near));
     float xScale = ANISOTROPIC() ? 1.0f : 1.0f / aspect;
-    rlColor4f(1, 1, 1, 1);
+    rlColor4f(WHITE.r, WHITE.g, WHITE.b, WHITE.a);
     if (TEXTURE_MODE())
-        rlEnableTexture(texture.id);
+        rlEnableTexture(meshTexture.id);
     else
         rlDisableTexture();
+
+    if (!TEXTURE_MODE() && !COLOR_MODE())
+    {
+        rlEnableWireMode();
+        rlColor4ub(BLUE.r, BLUE.g, BLUE.b, BLUE.a);
+    }
     rlBegin(RL_TRIANGLES);
 
     for (int i = 0; i < mesh->triangleCount; i++)
@@ -520,17 +491,18 @@ static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near
 
     rlEnd();
     rlDisableTexture();
+    rlDisableWireMode();
 }
 
-static void perspectiveCorrectCapture(Camera3D *main, Model *model, Texture2D texture, float rotation)
+static void perspectiveCorrectCapture(Camera3D *main, Model *model, Texture2D meshTexture, Texture2D *perspectiveCorrectTexture, float rotation)
 {
     unsigned char *cacheVertexColors = model->meshes[0].colors;
     if (TEXTURE_MODE() && !COLOR_MODE()) model->meshes[0].colors = NULL;
     ClearBackground(BLACK);
     BeginMode3D(*main);
-    //TODO: this is soe trick to avoid the model in space and model proejected to near plane texture divergence... its ugly though
+    //TODO: this is still needded to avoid the model in space and model proejected to near plane texture divergence... ugly though
     Texture2D previousTexture = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture;
-    model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = texture;
+    model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = meshTexture;
     DrawModelEx(*model, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * rotation, MODEL_SCALE, WHITE);
     model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = previousTexture;
     EndMode3D();
@@ -549,10 +521,11 @@ static void perspectiveCorrectCapture(Camera3D *main, Model *model, Texture2D te
     EndMode3D();
     Image mask = LoadImageFromScreen();
     alphaMaskPunchOut(&rgba, &mask, 1);
-    if (perspectiveCorrectTexture.id != 0) //TODO: the fuck ew??
-        UpdateTexture(perspectiveCorrectTexture, rgba.data);
+    ImageFlipVertical(&rgba); //TODO: dont miss this, could show it properly with NDC space funkyness... still a lot of pedagogy needs to be reorganized....
+    if (perspectiveCorrectTexture->id != 0)
+        UpdateTexture(*perspectiveCorrectTexture, rgba.data);
     else
-        perspectiveCorrectTexture = LoadTextureFromImage(rgba);
+        *perspectiveCorrectTexture = LoadTextureFromImage(rgba);
 
     UnloadImage(mask);
     UnloadImage(rgba);
@@ -568,10 +541,10 @@ static void alphaMaskPunchOut(Image *rgba, const Image *mask, unsigned char thre
     int pixelCount = rgba->width * rgba->height;
     for (int i = 0; i < pixelCount; ++i)
     {
-        unsigned int red = maskPixels[4 * i + 0];
-        unsigned int green = maskPixels[4 * i + 1];
-        unsigned int blue = maskPixels[4 * i + 2];
-        unsigned int luma = (red * 30u + green * 59u + blue * 11u) / 100u;
+        unsigned int rchannel = maskPixels[4 * i + 0];
+        unsigned int gchannel = maskPixels[4 * i + 1];
+        unsigned int bchannel = maskPixels[4 * i + 2];
+        unsigned int luma = (rchannel * 30u + gchannel * 59u + bchannel * 11u) / 100u;
         rgbaPixels[4 * i + 3] = (luma > threshold) ? 255 : 0;
     }
     UnloadImage(maskCopy);
