@@ -45,7 +45,6 @@ static void showOnlyFrontFace(Mesh *mesh);
 static void drawModelFilled(Model *model, Texture2D texture, float rotation);
 static void drawWiresAndPoints(Model *model, float rotation);
 
-static int nearPlanePointsCapacity = 0; //TODO: does this need to be global really?
 static void drawNearPlanePoints(Camera3D *main, float near, Model *nearPlanePointsModel, Mesh *mesh, float rotation, bool flipY);
 static void drawNearPlane(
     Camera3D *main, float aspect, float near, Model spatialWireModel, Mesh *mesh, Texture2D meshTexture, Texture2D perspectiveCorrectTexture, float rotation);
@@ -82,6 +81,12 @@ int main(void)
     jugemu.projection = CAMERA_PERSPECTIVE;
 
     float meshRotation = 0.0f;
+    //TODO:
+    // 1. test more meshes and multi meshed scenes?, clearly some meshes break the whole purpose (find the limit of that and demo why)
+    // 2. add proper clipping demo to the target meshes to show how it works with the spaces (i.e. through moving the meshes or the targeted camera)
+    // 3. add better coloration (Lcars) and onscreen annotations for what is happening
+    // 4. add better toggling and space navigation (currently jugemus settings might be borked for proper fps nav)
+    // 5. improve the code didactic, now that clean up has been done, things have been lost in order of fixed function visualization flow
     Model worldModel = LoadModelFromMesh(GenMeshCube(1.0f, 1.0f, 1.0f));
     // Model worldModel = LoadModelFromMesh(GenMeshKnot(1.0f, 1.0f, 16, 128));
 
@@ -99,7 +104,6 @@ int main(void)
 
     Mesh nearPlanePoints = (Mesh){0};
     nearPlanePoints.vertexCount = 3 * worldModel.meshes[0].triangleCount;
-    nearPlanePointsCapacity = nearPlanePoints.vertexCount;
     nearPlanePoints.vertices = RL_CALLOC(nearPlanePoints.vertexCount * 3, sizeof(float));
     Model nearPlanePointsModel = LoadModelFromMesh(nearPlanePoints);
 
@@ -112,7 +116,7 @@ int main(void)
     ndcModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = checkeredTexture;
     fillVertexColors(&ndcModel.meshes[0]);
 
-    Texture2D perspectiveCorrectTexture = {0}; //TODO: still wacky to do this and pass by reference everywhere i dont like it... its not neccessary
+    Texture2D perspectiveCorrectTexture = {0}; //TODO: still wacky to do this and pass by reference everywhere i dont like that
     Mesh spatialWire = GenMeshCube(1.0f, 1.0f, 1.0f);
     showOnlyFrontFace(&spatialWire);
     Model spatialWireModel = LoadModelFromMesh(spatialWire);
@@ -276,8 +280,8 @@ static void drawWiresAndPoints(Model *model, float rotation)
     model->meshes[0].colors = NULL;
     rlSetLineWidth(2.0f);
     DrawModelWiresEx(*model, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * rotation, MODEL_SCALE, BLUE);
-    // rlSetPointSize(8.0f);
-    // DrawModelPointsEx(*model, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * rotation, MODEL_SCALE, MAGENTA);
+    rlSetPointSize(8.0f);
+    DrawModelPointsEx(*model, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * rotation, MODEL_SCALE, MAGENTA);
     model->meshes[0].colors = cacheColors;
 }
 
@@ -323,7 +327,7 @@ static Vector3 reflectPlane(Vector3 intersectionCoord, Camera3D *main, float nea
 static void drawNearPlanePoints(Camera3D *main, float near, Model *nearPlanePointsModel, Mesh *mesh, float rotation, bool flipY)
 {
     Mesh *nearPlanePointsMesh = &nearPlanePointsModel->meshes[0];
-    int capacity = nearPlanePointsCapacity;
+    const int capacity = mesh->triangleCount * 3;
     int writtenVertices = 0;
     Vector3 los = Vector3Normalize(Vector3Subtract(main->target, main->position));
 
@@ -345,7 +349,11 @@ static void drawNearPlanePoints(Camera3D *main, float near, Model *nearPlanePoin
             continue;
         }
 
-        Vector3 hits[3] = {nearPlaneIntersection(main, near, a), nearPlaneIntersection(main, near, b), nearPlaneIntersection(main, near, c)};
+        Vector3 hits[3] = {
+            nearPlaneIntersection(main, near, a),
+            nearPlaneIntersection(main, near, b),
+            nearPlaneIntersection(main, near, c),
+        };
 
         for (int j = 0; j < 3 && writtenVertices < capacity; ++j)
         {
@@ -361,8 +369,8 @@ static void drawNearPlanePoints(Camera3D *main, float near, Model *nearPlanePoin
     }
 
     nearPlanePointsMesh->vertexCount = writtenVertices;
-    // rlSetPointSize(6.0f);
-    // DrawModelPoints(*nearPlanePointsModel, MODEL_POS, 1.0f, MAGENTA);
+    rlSetPointSize(6.0f);
+    DrawModelPoints(*nearPlanePointsModel, MODEL_POS, 1.0f, MAGENTA);
 }
 
 static void drawNearPlane(
