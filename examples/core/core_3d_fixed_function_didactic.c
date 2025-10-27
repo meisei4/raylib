@@ -5,9 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <float.h>
 
-static const int WIDTH = 640 * 1.5;
-static const int HEIGHT = 480 * 1.5;
+static const int WIDTH = 800;
+static const int HEIGHT = 450;
 static const float ANGULAR_VELOCITY = 1.25f;
 static const float FOVY_PERSPECTIVE = 60.0f;
 static const Vector3 MODEL_POS = {0.0f, 0.0f, 0.0f};
@@ -38,6 +39,19 @@ static unsigned int gFlags = FLAG_ASPECT | FLAG_COLOR_MODE;
         if (IsKeyPressed(K)) gFlags ^= (F);                                                                                                                    \
     } while (0)
 
+//TODO: update color coding on the state of the toggles, not only the text but the color of the ndc cube for example and stuff like that
+#define BAHAMA_BLUE CLITERAL(Color){0, 102, 153, 255}
+#define SUNFLOWER CLITERAL(Color){255, 204, 153, 255}
+#define PALE_CANARY CLITERAL(Color){255, 255, 153, 255}
+#define ANAKIWA CLITERAL(Color){153, 204, 255, 255}
+#define MARINER CLITERAL(Color){51, 102, 204, 255}
+#define NEON_CARROT CLITERAL(Color){255, 153, 51, 255}
+#define EGGPLANT CLITERAL(Color){102, 68, 102, 255}
+#define HOPBUSH CLITERAL(Color){204, 102, 153, 255}
+#define LILAC CLITERAL(Color){204, 153, 204, 255}
+#define RED_DAMASK CLITERAL(Color){221, 102, 68, 255}
+#define CHESTNUT_ROSE CLITERAL(Color){204, 102, 102, 255}
+
 static void drawBasisVector(Camera3D *main);
 static void updateSpatialWire(Camera3D *main, float aspect, float near, float far, Mesh *spatialWire);
 static void drawSpatialWire(Mesh spatialWire);
@@ -55,6 +69,7 @@ static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near
 static void perspectiveCorrectCapture(Camera3D *main, Model *model, Texture2D meshTexture, Texture2D *perspectiveCorrectTexture, float rotation);
 static void alphaMaskPunchOut(Image *rgba, const Image *mask, unsigned char threshold);
 static void fillVertexColors(Mesh *mesh);
+static void roundCheckered(Image *img, int tileWidth, int tileHeight, int radius);
 static void moveJugemuOrbital(Camera3D *jugemu, float deltaTime);
 
 int main(void)
@@ -84,11 +99,22 @@ int main(void)
     //TODO:
     // 1. test more meshes and multi meshed scenes?, clearly some meshes break the whole purpose (find the limit of that and demo why)
     // 2. add proper clipping demo to the target meshes to show how it works with the spaces (i.e. through moving the meshes or the targeted camera)
-    // 3. add better coloration (Lcars) and onscreen annotations for what is happening
+    // 3. add better coloration (Lcars would be cool, find equivalent in raylib default colors) and better onscreen annotations for what is happening
     // 4. add better toggling and space navigation (currently jugemus settings might be borked for proper fps nav)
-    // 5. improve the code didactic, now that clean up has been done, things have been lost in order of fixed function visualization flow
-    Model worldModel = LoadModelFromMesh(GenMeshCube(1.0f, 1.0f, 1.0f));
-    // Model worldModel = LoadModelFromMesh(GenMeshKnot(1.0f, 1.0f, 16, 128));
+    // 5. improve the code didactic, now that clean up has been done, things have been deptht in order of fixed function visualization flow
+
+    // Model worldModel = LoadModelFromMesh(GenMeshCube(1.0f, 1.0f, 1.0f));
+    // Image textureImage = GenImageChecked(4, 4, 1, 1, BLACK, WHITE);
+
+    // Model worldModel = LoadModelFromMesh(GenMeshSphere(0.5, 8, 8));
+    // Image textureImage = GenImageChecked(16, 16, 1, 1, BLACK, WHITE);
+
+    // Model worldModel = LoadModelFromMesh(GenMeshKnot(1.0f, 1.0f, 8, 64));
+    Model worldModel = LoadModelFromMesh(GenMeshKnot(1.0f, 1.0f, 16, 128));
+    Image textureImage = GenImageChecked(32, 32, 1, 1, BLACK, WHITE);
+
+    Texture2D meshTexture = LoadTextureFromImage(textureImage);
+    UnloadImage(textureImage);
 
     Mesh ndcMesh = (Mesh){0};
     ndcMesh.vertexCount = worldModel.meshes[0].vertexCount;
@@ -98,7 +124,10 @@ int main(void)
     ndcMesh.indices = RL_CALLOC(ndcMesh.triangleCount * 3, sizeof(unsigned short));
 
     if (worldModel.meshes[0].texcoords) memcpy(ndcMesh.texcoords, worldModel.meshes[0].texcoords, sizeof(float) * 2 * ndcMesh.vertexCount);
-    if (worldModel.meshes[0].indices) memcpy(ndcMesh.indices, worldModel.meshes[0].indices, sizeof(unsigned short) * 3 * ndcMesh.triangleCount);
+    if (worldModel.meshes[0].indices)
+        memcpy(ndcMesh.indices, worldModel.meshes[0].indices, sizeof(unsigned short) * 3 * ndcMesh.triangleCount);
+    else
+        ndcMesh.indices = NULL;
 
     Model ndcModel = LoadModelFromMesh(ndcMesh);
 
@@ -107,13 +136,9 @@ int main(void)
     nearPlanePoints.vertices = RL_CALLOC(nearPlanePoints.vertexCount * 3, sizeof(float));
     Model nearPlanePointsModel = LoadModelFromMesh(nearPlanePoints);
 
-    Image checkeredImage = GenImageChecked(16, 16, 4, 4, BLACK, WHITE);
-    Texture2D checkeredTexture = LoadTextureFromImage(checkeredImage);
-    UnloadImage(checkeredImage);
-
-    worldModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = checkeredTexture;
+    worldModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = meshTexture;
     fillVertexColors(&worldModel.meshes[0]);
-    ndcModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = checkeredTexture;
+    ndcModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = meshTexture;
     fillVertexColors(&ndcModel.meshes[0]);
 
     Texture2D perspectiveCorrectTexture = {0}; //TODO: still wacky to do this and pass by reference everywhere i dont like that
@@ -137,32 +162,31 @@ int main(void)
         if (NDC_SPACE()) worldToNDCSpace(&main, aspect, near, far, &worldModel, &ndcModel, meshRotation);
 
         BeginDrawing();
-        if (PERSPECTIVE_CORRECT() && TEXTURE_MODE())
-            perspectiveCorrectCapture(&main, capturedModel, checkeredTexture, &perspectiveCorrectTexture, meshRotation);
+        if (PERSPECTIVE_CORRECT() && TEXTURE_MODE()) perspectiveCorrectCapture(&main, capturedModel, meshTexture, &perspectiveCorrectTexture, meshRotation);
         ClearBackground(BLACK);
 
         BeginMode3D(jugemu);
         drawBasisVector(&main);
         updateSpatialWire(&main, ANISOTROPIC() ? aspect : 1.0f, near, far, &spatialWire);
         drawSpatialWire(spatialWire);
-        drawModelFilled(capturedModel, checkeredTexture, meshRotation);
+        drawModelFilled(capturedModel, meshTexture, meshRotation);
         drawWiresAndPoints(capturedModel, meshRotation);
         drawNearPlanePoints(&main, near, &nearPlanePointsModel, capturedMesh, meshRotation, NDC_SPACE());
-        drawNearPlane(&main, ANISOTROPIC() ? aspect : 1.0f, near, spatialWireModel, capturedMesh, checkeredTexture, perspectiveCorrectTexture, meshRotation);
+        drawNearPlane(&main, ANISOTROPIC() ? aspect : 1.0f, near, spatialWireModel, capturedMesh, meshTexture, perspectiveCorrectTexture, meshRotation);
         EndMode3D();
 
-        DrawText("Arrows/WASD: move camera | R: reset camera | Spacebar: pause", 12, 40, 20, WHITE);
-        DrawText("E: NDC | Q: ASPECT | P: PERSPECTIVE | C: COLOR | T: TEXTURE", 12, 14, 20, WHITE);
-        DrawText("SPACE:", 12, 66, 20, WHITE);
-        DrawText(NDC_SPACE() ? "NDC" : "WORLD", 180, 66, 20, WHITE);
-        DrawText("ASPECT:", 12, 92, 20, WHITE);
-        DrawText(ANISOTROPIC() ? "ANISOTROPIC" : "ISOTROPIC", 180, 92, 20, WHITE);
-        DrawText("TEXTURE:", 12, 118, 20, WHITE);
-        DrawText(TEXTURE_MODE() ? "ON" : "OFF", 180, 118, 20, WHITE);
-        DrawText("PERSPECTIVE:", 12, 144, 20, WHITE);
-        DrawText(PERSPECTIVE_CORRECT() ? "CORRECT" : "INCORRECT", 180, 144, 20, WHITE);
-        DrawText("COLORS:", 12, 170, 20, WHITE);
-        DrawText(COLOR_MODE() ? "ON" : "OFF", 180, 170, 20, WHITE);
+        DrawText("Arrows/WASD: move camera | R: reset camera | Spacebar: pause", 12, 40, 20, PALE_CANARY);
+        DrawText("N: NDC | Q: ASPECT | P: PERSPECTIVE | C: COLOR | T: TEXTURE", 12, 14, 20, PALE_CANARY);
+        DrawText("SPACE:", 12, 66, 20, PALE_CANARY);
+        DrawText(NDC_SPACE() ? "NDC" : "WORLD", 180, 66, 20, NDC_SPACE() ? ANAKIWA : NEON_CARROT);
+        DrawText("ASPECT:", 12, 92, 20, PALE_CANARY);
+        DrawText(ANISOTROPIC() ? "ANISOTROPIC" : "ISOTROPIC", 180, 92, 20, ANISOTROPIC() ? MARINER : PALE_CANARY);
+        DrawText("TEXTURE:", 12, 118, 20, PALE_CANARY);
+        DrawText(TEXTURE_MODE() ? "ON" : "OFF", 180, 118, 20, TEXTURE_MODE() ? ANAKIWA : CHESTNUT_ROSE);
+        DrawText("PERSPECTIVE:", 12, 144, 20, PALE_CANARY);
+        DrawText(PERSPECTIVE_CORRECT() ? "CORRECT" : "INCORRECT", 180, 144, 20, PERSPECTIVE_CORRECT() ? ANAKIWA : RED_DAMASK);
+        DrawText("COLORS:", 12, 170, 20, PALE_CANARY);
+        DrawText(COLOR_MODE() ? "ON" : "OFF", 180, 170, 20, COLOR_MODE() ? ANAKIWA : CHESTNUT_ROSE);
         EndDrawing();
     }
 
@@ -170,7 +194,7 @@ int main(void)
     UnloadModel(ndcModel);
     UnloadModel(nearPlanePointsModel);
     UnloadModel(spatialWireModel);
-    UnloadTexture(checkeredTexture);
+    UnloadTexture(meshTexture);
     CloseWindow();
     return 0;
 }
@@ -179,44 +203,40 @@ static void showOnlyFrontFace(Mesh *mesh)
 {
     if (!mesh->colors) mesh->colors = (unsigned char *)RL_CALLOC(mesh->vertexCount, sizeof(Color));
     Color *colors = (Color *)mesh->colors;
-    for (int i = 0; i < mesh->vertexCount; i++)
-        colors[i] = (Color){255, 255, 255, 0};
+    for (int i = 0; i < mesh->vertexCount; i++) colors[i] = (Color){255, 255, 255, 0};
     //first 4 indices is the front face of the mesh
-    for (int i = 0; i < 4; i++)
-    {
-        colors[i].a = 255;
-    }
+    for (int i = 0; i < 4; i++) colors[i].a = 255;
 }
 
-static void basisVector(Camera3D *main, Vector3 *losOut, Vector3 *rightOut, Vector3 *upOut)
+static void basisVector(Camera3D *main, Vector3 *depthOut, Vector3 *rightOut, Vector3 *upOut)
 {
-    Vector3 los = Vector3Normalize(Vector3Subtract(main->target, main->position));
-    Vector3 right = Vector3Normalize(Vector3CrossProduct(los, main->up));
-    Vector3 up = Vector3Normalize(Vector3CrossProduct(right, los));
-    *losOut = los;
+    Vector3 depth = Vector3Normalize(Vector3Subtract(main->target, main->position));
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(depth, main->up));
+    Vector3 up = Vector3Normalize(Vector3CrossProduct(right, depth));
+    *depthOut = depth;
     *rightOut = right;
     *upOut = up;
 }
 
 static void drawBasisVector(Camera3D *main)
 {
-    Vector3 los, right, up;
-    basisVector(main, &los, &right, &up);
-    DrawLine3D(main->position, Vector3Add(main->position, right), PURPLE);
-    DrawLine3D(main->position, Vector3Add(main->position, up), DARKGREEN);
-    DrawLine3D(main->position, Vector3Add(main->position, los), SKYBLUE);
+    Vector3 depth, right, up;
+    basisVector(main, &depth, &right, &up);
+    DrawLine3D(main->position, Vector3Add(main->position, right), NEON_CARROT);
+    DrawLine3D(main->position, Vector3Add(main->position, up), LILAC);
+    DrawLine3D(main->position, Vector3Add(main->position, depth), MARINER);
 }
 
 static void updateSpatialWire(Camera3D *main, float aspect, float near, float far, Mesh *spatialWire)
 {
-    Vector3 los, right, up;
-    basisVector(main, &los, &right, &up);
+    Vector3 depth, right, up;
+    basisVector(main, &depth, &right, &up);
     float halfFovy = DEG2RAD * main->fovy * 0.5f;
     float halfHNear = near * tanf(halfFovy);
     float halfWNear = ANISOTROPIC() ? (halfHNear * aspect) : halfHNear;
     float halfHFar = far * tanf(halfFovy);
     float halfWFar = ANISOTROPIC() ? (halfHFar * aspect) : halfHFar;
-    Vector3 centerNear = Vector3Add(main->position, Vector3Scale(los, near));
+    Vector3 centerNear = Vector3Add(main->position, Vector3Scale(depth, near));
     float halfDepth = NDC_SPACE() ? (ANISOTROPIC() ? (0.5f * (far - near)) : halfHNear) : (0.5f * (far - near));
     float depthSpan = 2.0f * halfDepth;
     float farHalfW = NDC_SPACE() ? halfWNear : halfWFar;
@@ -228,10 +248,10 @@ static void updateSpatialWire(Camera3D *main, float aspect, float near, float fa
         Vector3 offset = Vector3Subtract(vertex, centerNear);
         float xSign = (Vector3DotProduct(offset, right) >= 0.0f) ? 1.0f : -1.0f;
         float ySign = (Vector3DotProduct(offset, up) >= 0.0f) ? 1.0f : -1.0f;
-        float farMask = (Vector3DotProduct(offset, los) > halfDepth) ? 1.0f : 0.0f;
+        float farMask = (Vector3DotProduct(offset, depth) > halfDepth) ? 1.0f : 0.0f;
         float finalHalfWidth = halfWNear + farMask * (farHalfW - halfWNear);
         float finalHalfHeight = halfHNear + farMask * (farHalfH - halfHNear);
-        Vector3 faceCenter = Vector3Add(centerNear, Vector3Scale(los, farMask * depthSpan));
+        Vector3 faceCenter = Vector3Add(centerNear, Vector3Scale(depth, farMask * depthSpan));
         Vector3 result = Vector3Add(faceCenter, Vector3Add(Vector3Scale(right, xSign * finalHalfWidth), Vector3Scale(up, ySign * finalHalfHeight)));
         spatialWire->vertices[3 * i + 0] = result.x;
         spatialWire->vertices[3 * i + 1] = result.y;
@@ -247,7 +267,6 @@ static void drawSpatialWire(Mesh spatialWire)
     static const int connectingFaces[4][2] = {{0, 4}, {1, 7}, {2, 6}, {3, 5}};
     static const int (*faces[3])[2] = {frontFace, backFace, connectingFaces};
 
-    rlSetLineWidth(2.0f);
     for (int i = 0; i < 3; i++)
         for (int j = 0; j < 4; j++)
         {
@@ -256,19 +275,18 @@ static void drawSpatialWire(Mesh spatialWire)
             int edgeIndexB = edges[j][1] * 3;
             Vector3 startPosition = {spatialWire.vertices[edgeIndexA + 0], spatialWire.vertices[edgeIndexA + 1], spatialWire.vertices[edgeIndexA + 2]};
             Vector3 endPosition = {spatialWire.vertices[edgeIndexB + 0], spatialWire.vertices[edgeIndexB + 1], spatialWire.vertices[edgeIndexB + 2]};
-            DrawLine3D(startPosition, endPosition, WHITE);
+            Color edgeColor = (i == 0) ? NEON_CARROT : (i == 1) ? EGGPLANT : HOPBUSH;
+            DrawLine3D(startPosition, endPosition, edgeColor);
         }
 }
 
 static void drawModelFilled(Model *model, Texture2D texture, float rotation)
 {
-    if (!(COLOR_MODE() || TEXTURE_MODE()))
-    {
-        return;
-    }
+    if (!(COLOR_MODE() || TEXTURE_MODE())) return;
     unsigned char *colorsBackup = model->meshes[0].colors;
     if (TEXTURE_MODE() && !COLOR_MODE()) model->meshes[0].colors = NULL;
     model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id = TEXTURE_MODE() ? texture.id : 0;
+    //TODO: should i flip the model upside down in the NDC phase? or the screen draws? the points are getting flipped but not the near plane...
     DrawModelEx(*model, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * rotation, MODEL_SCALE, WHITE);
     model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id = 0;
     model->meshes[0].colors = colorsBackup;
@@ -277,12 +295,14 @@ static void drawModelFilled(Model *model, Texture2D texture, float rotation)
 static void drawWiresAndPoints(Model *model, float rotation)
 {
     unsigned char *cacheColors = model->meshes[0].colors;
+    unsigned int cacheID = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id;
     model->meshes[0].colors = NULL;
-    rlSetLineWidth(2.0f);
-    DrawModelWiresEx(*model, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * rotation, MODEL_SCALE, BLUE);
-    rlSetPointSize(8.0f);
-    DrawModelPointsEx(*model, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * rotation, MODEL_SCALE, MAGENTA);
+    model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id = 0;
+    DrawModelWiresEx(*model, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * rotation, MODEL_SCALE, MARINER);
+    rlSetPointSize(4.0f);
+    DrawModelPointsEx(*model, MODEL_POS, (Vector3){0, 1, 0}, RAD2DEG * rotation, MODEL_SCALE, LILAC);
     model->meshes[0].colors = cacheColors;
+    model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id = cacheID;
 }
 
 static Vector3 nearPlaneIntersection(Camera3D *main, float near, Vector3 worldCoord)
@@ -290,34 +310,24 @@ static Vector3 nearPlaneIntersection(Camera3D *main, float near, Vector3 worldCo
     Vector3 viewDir = Vector3Normalize(Vector3Subtract(main->target, main->position));
     Vector3 mainCameraToPoint = Vector3Subtract(worldCoord, main->position);
     float depthAlongView = Vector3DotProduct(mainCameraToPoint, viewDir);
-    if (depthAlongView <= 0.0f)
-    {
-        return Vector3Add(main->position, Vector3Scale(viewDir, near));
-    }
+    if (depthAlongView <= 0.0f) return Vector3Add(main->position, Vector3Scale(viewDir, near));
     float scaleToNear = near / depthAlongView;
     return Vector3Add(main->position, Vector3Scale(mainCameraToPoint, scaleToNear));
 }
 
-static Vector3 translateRotateScale(Vector3 coordinate, Vector3 position, Vector3 scale, float rotation)
+static Vector3 translateRotateScale(int inverse, Vector3 coordinate, Vector3 position, Vector3 scale, float rotation)
 {
     Matrix matrix =
         MatrixMultiply(MatrixMultiply(MatrixScale(scale.x, scale.y, scale.z), MatrixRotateY(rotation)), MatrixTranslate(position.x, position.y, position.z));
-    return Vector3Transform(coordinate, matrix);
-}
-
-static Vector3 inverseTranslateRotateScale(Vector3 coordinate, Vector3 position, Vector3 scale, float rotation)
-{
-    Matrix matrix =
-        MatrixMultiply(MatrixMultiply(MatrixScale(scale.x, scale.y, scale.z), MatrixRotateY(rotation)), MatrixTranslate(position.x, position.y, position.z));
-    Matrix inverseMatrix = MatrixInvert(matrix);
-    return Vector3Transform(coordinate, inverseMatrix);
+    Matrix result = inverse ? MatrixInvert(matrix) : matrix;
+    return Vector3Transform(coordinate, result);
 }
 
 static Vector3 reflectPlane(Vector3 intersectionCoord, Camera3D *main, float near)
 {
-    Vector3 los, right, up;
-    basisVector(main, &los, &right, &up);
-    Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(los, near));
+    Vector3 depth, right, up;
+    basisVector(main, &depth, &right, &up);
+    Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(depth, near));
     Vector3 toClipPlane = Vector3Subtract(intersectionCoord, centerNearPlane);
     float x = Vector3DotProduct(toClipPlane, right);
     float y = Vector3DotProduct(toClipPlane, up);
@@ -329,7 +339,7 @@ static void drawNearPlanePoints(Camera3D *main, float near, Model *nearPlanePoin
     Mesh *nearPlanePointsMesh = &nearPlanePointsModel->meshes[0];
     const int capacity = mesh->triangleCount * 3;
     int writtenVertices = 0;
-    Vector3 los = Vector3Normalize(Vector3Subtract(main->target, main->position));
+    Vector3 depth = Vector3Normalize(Vector3Subtract(main->target, main->position));
 
     for (int i = 0; i < mesh->triangleCount; i++)
     {
@@ -339,12 +349,12 @@ static void drawNearPlanePoints(Camera3D *main, float near, Model *nearPlanePoin
         Vector3 a = (Vector3){mesh->vertices[3 * ia + 0], mesh->vertices[3 * ia + 1], mesh->vertices[3 * ia + 2]};
         Vector3 b = (Vector3){mesh->vertices[3 * ib + 0], mesh->vertices[3 * ib + 1], mesh->vertices[3 * ib + 2]};
         Vector3 c = (Vector3){mesh->vertices[3 * ic + 0], mesh->vertices[3 * ic + 1], mesh->vertices[3 * ic + 2]};
-        a = translateRotateScale(a, MODEL_POS, MODEL_SCALE, rotation);
-        b = translateRotateScale(b, MODEL_POS, MODEL_SCALE, rotation);
-        c = translateRotateScale(c, MODEL_POS, MODEL_SCALE, rotation);
+        a = translateRotateScale(0, a, MODEL_POS, MODEL_SCALE, rotation);
+        b = translateRotateScale(0, b, MODEL_POS, MODEL_SCALE, rotation);
+        c = translateRotateScale(0, c, MODEL_POS, MODEL_SCALE, rotation);
 
         //test if front facing or not
-        if (Vector3DotProduct(Vector3Normalize(Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, a))), los) > 0.0f)
+        if (Vector3DotProduct(Vector3Normalize(Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, a))), depth) > 0.0f)
         {
             continue;
         }
@@ -358,9 +368,9 @@ static void drawNearPlanePoints(Camera3D *main, float near, Model *nearPlanePoin
         for (int j = 0; j < 3 && writtenVertices < capacity; ++j)
         {
             Vector3 worldV = (Vector3[]){a, b, c}[j];
+            //TODO: the NDC space is good here but the texture draw (either the perspective incorrect or correct, both get drawn upside down....
             Vector3 hit = flipY ? reflectPlane(hits[j], main, near) : hits[j];
-            rlSetLineWidth(1.0f);
-            DrawLine3D(worldV, hit, (Color){255, 0, 0, 80});
+            DrawLine3D(worldV, hit, (Color){RED_DAMASK.r, RED_DAMASK.g, RED_DAMASK.b, 20});
             nearPlanePointsMesh->vertices[3 * writtenVertices + 0] = hit.x;
             nearPlanePointsMesh->vertices[3 * writtenVertices + 1] = hit.y;
             nearPlanePointsMesh->vertices[3 * writtenVertices + 2] = hit.z;
@@ -369,8 +379,8 @@ static void drawNearPlanePoints(Camera3D *main, float near, Model *nearPlanePoin
     }
 
     nearPlanePointsMesh->vertexCount = writtenVertices;
-    rlSetPointSize(6.0f);
-    DrawModelPoints(*nearPlanePointsModel, MODEL_POS, 1.0f, MAGENTA);
+    rlSetPointSize(3.0f);
+    DrawModelPoints(*nearPlanePointsModel, MODEL_POS, 1.0f, LILAC);
 }
 
 static void drawNearPlane(
@@ -385,7 +395,6 @@ static void drawNearPlane(
     perspectiveIncorrectCapture(main, aspect, near, mesh, meshTexture, rotation);
 }
 
-//TODO: this has to exist somewhere in raylib math right???
 static Vector3 rotatePointAboutAxis(Vector3 point, Vector3 axisPointA, Vector3 axisPointB, float angle)
 {
     Vector3 axisDir = Vector3Normalize(Vector3Subtract(axisPointB, axisPointA));
@@ -396,43 +405,36 @@ static Vector3 rotatePointAboutAxis(Vector3 point, Vector3 axisPointA, Vector3 a
 
 static void worldToNDCSpace(Camera3D *main, float aspect, float near, float far, Model *world, Model *ndc, float rotation)
 {
-    Vector3 los, right, up;
-    basisVector(main, &los, &right, &up);
+    Vector3 depth, right, up;
+    basisVector(main, &depth, &right, &up);
     float halfFovy = DEG2RAD * main->fovy * 0.5f;
     float halfHNear = near * tanf(halfFovy);
     float halfWNear = ANISOTROPIC() ? (halfHNear * aspect) : halfHNear;
     float halfDepthNDC = ANISOTROPIC() ? (0.5f * (far - near)) : halfHNear;
-    Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(los, near));
-    Vector3 centerNDCCube = Vector3Add(centerNearPlane, Vector3Scale(los, halfDepthNDC));
+    Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(depth, near));
+    Vector3 centerNDCCube = Vector3Add(centerNearPlane, Vector3Scale(depth, halfDepthNDC));
     Mesh *worldMesh = &world->meshes[0];
     Mesh *ndcMesh = &ndc->meshes[0];
 
     for (int i = 0; i < worldMesh->vertexCount; i++)
     {
         Vector3 objectVertex = {worldMesh->vertices[3 * i + 0], worldMesh->vertices[3 * i + 1], worldMesh->vertices[3 * i + 2]};
-        Vector3 worldVertex = translateRotateScale(objectVertex, MODEL_POS, MODEL_SCALE, rotation);
-        float signedDepth = Vector3DotProduct(Vector3Subtract(worldVertex, main->position), los);
-        Vector3 ndcCoord;
-        if (signedDepth <= 0.0f)
-        {
-            ndcCoord = (Vector3){0.0f, 0.0f, 1.0f};
-        }
-        else
-        {
-            Vector3 intersectionCoord = nearPlaneIntersection(main, near, worldVertex);
-            Vector3 clipPlaneVector = Vector3Subtract(intersectionCoord, centerNearPlane);
-            float xNDC = Vector3DotProduct(clipPlaneVector, right) / halfWNear;
-            float yNDC = Vector3DotProduct(clipPlaneVector, up) / halfHNear;
-            float zNDC = ((far + near) - (2.0f * far * near) / signedDepth) / (far - near);
-            ndcCoord = (Vector3){xNDC, yNDC, zNDC};
-        }
-        //TODO: ugly as hell, clean it up somehow PLEASE
-        Vector3 scaledNDCCoord = Vector3Add(
-            centerNDCCube,
-            Vector3Add(
-                Vector3Scale(right, ndcCoord.x * halfWNear),
-                Vector3Add(Vector3Scale(up, ndcCoord.y * halfHNear), Vector3Scale(los, ndcCoord.z * halfDepthNDC))));
-        Vector3 mappedObjectCoord = inverseTranslateRotateScale(scaledNDCCoord, MODEL_POS, MODEL_SCALE, rotation);
+        Vector3 worldVertex = translateRotateScale(0, objectVertex, MODEL_POS, MODEL_SCALE, rotation);
+        float signedDepth = Vector3DotProduct(Vector3Subtract(worldVertex, main->position), depth);
+        Vector3 intersectionCoord = nearPlaneIntersection(main, near, worldVertex);
+        Vector3 clipPlaneVector = Vector3Subtract(intersectionCoord, centerNearPlane);
+        float xNDC = Vector3DotProduct(clipPlaneVector, right) / halfWNear;
+        float yNDC = Vector3DotProduct(clipPlaneVector, up) / halfHNear;
+        float zNDC = ((far + near) - (2.0f * far * near) / signedDepth) / (far - near);
+        Vector3 ndcCoord = (Vector3){xNDC, yNDC, zNDC};
+
+        Vector3 scaledRight = Vector3Scale(right, ndcCoord.x * halfWNear);
+        Vector3 scaledUp = Vector3Scale(up, ndcCoord.y * halfHNear);
+        Vector3 scaledDepth = Vector3Scale(depth, ndcCoord.z * halfDepthNDC);
+        Vector3 offset = Vector3Add(Vector3Add(scaledRight, scaledUp), scaledDepth);
+        Vector3 scaledNDCCoord = Vector3Add(centerNDCCube, offset);
+
+        Vector3 mappedObjectCoord = translateRotateScale(1, scaledNDCCoord, MODEL_POS, MODEL_SCALE, rotation);
         ndcMesh->vertices[3 * i + 0] = mappedObjectCoord.x;
         ndcMesh->vertices[3 * i + 1] = mappedObjectCoord.y;
         ndcMesh->vertices[3 * i + 2] = mappedObjectCoord.z;
@@ -442,18 +444,19 @@ static void worldToNDCSpace(Camera3D *main, float aspect, float near, float far,
 static Vector3 aspectCorrectNearPlane(Vector3 hit, Vector3 center, Vector3 right, Vector3 up, float xScale)
 {
     Vector3 centerDistance = Vector3Subtract(hit, center);
-    float xRight = Vector3DotProduct(centerDistance, right);
-    float yUp = Vector3DotProduct(centerDistance, up);
-    return Vector3Add(center, Vector3Add(Vector3Scale(right, xRight * xScale), Vector3Scale(up, yUp)));
+    float x = Vector3DotProduct(centerDistance, right);
+    float y = Vector3DotProduct(centerDistance, up);
+    return Vector3Add(center, Vector3Add(Vector3Scale(right, x * xScale), Vector3Scale(up, y)));
 }
 
 static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near, Mesh *mesh, Texture2D meshTexture, float rotation)
 {
-    Vector3 los, right, up;
-    basisVector(main, &los, &right, &up);
-    Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(los, near));
+    //TODO: the NDC space is not working here things get drawn upside down....
+    Vector3 depth, right, up;
+    basisVector(main, &depth, &right, &up);
+    Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(depth, near));
     float xScale = ANISOTROPIC() ? 1.0f : 1.0f / aspect;
-    rlColor4f(WHITE.r, WHITE.g, WHITE.b, WHITE.a);
+    rlColor4ub(WHITE.r, WHITE.g, WHITE.b, WHITE.a);
     if (TEXTURE_MODE())
         rlEnableTexture(meshTexture.id);
     else
@@ -462,7 +465,7 @@ static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near
     if (!TEXTURE_MODE() && !COLOR_MODE())
     {
         rlEnableWireMode();
-        rlColor4ub(BLUE.r, BLUE.g, BLUE.b, BLUE.a);
+        rlColor4ub(MARINER.r, MARINER.g, MARINER.b, MARINER.a);
     }
     rlBegin(RL_TRIANGLES);
 
@@ -471,14 +474,14 @@ static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near
         int ia = mesh->indices ? mesh->indices[3 * i + 0] : 3 * i + 0;
         int ib = mesh->indices ? mesh->indices[3 * i + 1] : 3 * i + 1;
         int ic = mesh->indices ? mesh->indices[3 * i + 2] : 3 * i + 2;
-        //TODO: the vertex mutation stages is gross here idk how to clean it up though
+
         Vector3 vertexA = (Vector3){mesh->vertices[3 * ia + 0], mesh->vertices[3 * ia + 1], mesh->vertices[3 * ia + 2]};
         Vector3 vertexB = (Vector3){mesh->vertices[3 * ib + 0], mesh->vertices[3 * ib + 1], mesh->vertices[3 * ib + 2]};
         Vector3 vertexC = (Vector3){mesh->vertices[3 * ic + 0], mesh->vertices[3 * ic + 1], mesh->vertices[3 * ic + 2]};
 
-        vertexA = translateRotateScale(vertexA, MODEL_POS, MODEL_SCALE, rotation);
-        vertexB = translateRotateScale(vertexB, MODEL_POS, MODEL_SCALE, rotation);
-        vertexC = translateRotateScale(vertexC, MODEL_POS, MODEL_SCALE, rotation);
+        vertexA = translateRotateScale(0, vertexA, MODEL_POS, MODEL_SCALE, rotation);
+        vertexB = translateRotateScale(0, vertexB, MODEL_POS, MODEL_SCALE, rotation);
+        vertexC = translateRotateScale(0, vertexC, MODEL_POS, MODEL_SCALE, rotation);
 
         vertexA = aspectCorrectNearPlane(nearPlaneIntersection(main, near, vertexA), centerNearPlane, right, up, xScale);
         vertexB = aspectCorrectNearPlane(nearPlaneIntersection(main, near, vertexB), centerNearPlane, right, up, xScale);
@@ -504,6 +507,7 @@ static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near
 
 static void perspectiveCorrectCapture(Camera3D *main, Model *model, Texture2D meshTexture, Texture2D *perspectiveCorrectTexture, float rotation)
 {
+    //TODO: the NDC space is not working here things get drawn upside down....
     unsigned char *cacheVertexColors = model->meshes[0].colors;
     if (TEXTURE_MODE() && !COLOR_MODE()) model->meshes[0].colors = NULL;
     ClearBackground(BLACK);
@@ -571,6 +575,38 @@ static void fillVertexColors(Mesh *mesh)
         colors[ib] = GREEN;
         colors[ic] = BLUE;
     }
+    //TODO: for sphere only really
+    // Vector3 min = (Vector3){FLT_MAX, FLT_MAX, FLT_MAX};
+    // Vector3 max = (Vector3){-FLT_MAX, -FLT_MAX, -FLT_MAX};
+    // for (int i = 0; i < mesh->vertexCount; ++i)
+    // {
+    //     float x = mesh->vertices[3 * i + 0];
+    //     float y = mesh->vertices[3 * i + 1];
+    //     float z = mesh->vertices[3 * i + 2];
+    //     if (x < min.x) min.x = x;
+    //     if (y < min.y) min.y = y;
+    //     if (z < min.z) min.z = z;
+    //     if (x > max.x) max.x = x;
+    //     if (y > max.y) max.y = y;
+    //     if (z > max.z) max.z = z;
+    // }
+    // Vector3 size = (Vector3){max.x - min.x, max.y - min.y, max.z - min.z};
+    // if (size.x == 0) size.x = 1;
+    // if (size.y == 0) size.y = 1;
+    // if (size.z == 0) size.z = 1;
+    // for (int i = 0; i < mesh->vertexCount; ++i)
+    // {
+    //     float nx = (mesh->vertices[3 * i + 0] - min.x) / size.x;
+    //     float ny = (mesh->vertices[3 * i + 1] - min.y) / size.y;
+    //     float nz = (mesh->vertices[3 * i + 2] - min.z) / size.z;
+    //     float sum = nx + ny + nz;
+    //     if (sum <= 0.0f) sum = 1.0f;
+    //     float wx = nx / sum, wy = ny / sum, wz = nz / sum;
+    //     float r = wx * RED.r + wy * GREEN.r + wz * BLUE.r;
+    //     float g = wx * RED.g + wy * GREEN.g + wz * BLUE.g;
+    //     float b = wx * RED.b + wy * GREEN.b + wz * BLUE.b;
+    //     colors[i] = (Color){(unsigned char)r, (unsigned char)g, (unsigned char)b, 255};
+    // }
 }
 
 static void moveJugemuOrbital(Camera3D *jugemu, float deltaTime)
@@ -603,8 +639,8 @@ static void moveJugemuOrbital(Camera3D *jugemu, float deltaTime)
     jugemu->position.x = radius * cosf(elevation) * cosf(azimuth);
     jugemu->position.y = radius * sinf(elevation);
     jugemu->position.z = radius * cosf(elevation) * sinf(azimuth);
-    Vector3 los = Vector3Normalize(Vector3Subtract((Vector3){0, 0, 0}, jugemu->position));
-    Vector3 up = rotatePointAboutAxis(jugemu->up, (Vector3){0, 0, 0}, los, rollDeltaRadians);
+    Vector3 depth = Vector3Normalize(Vector3Subtract((Vector3){0, 0, 0}, jugemu->position));
+    Vector3 up = rotatePointAboutAxis(jugemu->up, (Vector3){0, 0, 0}, depth, rollDeltaRadians);
     jugemu->target = (Vector3){0, 0, 0};
     jugemu->up = Vector3Normalize(up);
 }
