@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
-#include <float.h>
 
 static const int WIDTH = 800;
 static const int HEIGHT = 450;
@@ -16,19 +15,23 @@ static const Vector3 MODEL_SCALE = {1.0f, 1.0f, 1.0f};
 static const Vector3 MAIN_POS = {0.0f, 0.0f, 2.0f};
 static const Vector3 JUGEMU_POS_ISO = {3.0f, 1.0f, 3.0f};
 
+static const float BLEND_SCALAR = 3.0f;
+
 enum
 {
     FLAG_NDC = 1u << 0,                 // N
-    FLAG_ASPECT = 1u << 1,              // Q
-    FLAG_PERSPECTIVE_CORRECT = 1u << 2, // P
-    FLAG_PAUSE = 1u << 3,               // SPACE
-    FLAG_COLOR_MODE = 1u << 4,          // C
-    FLAG_TEXTURE_MODE = 1u << 5         // T
+    FLAG_REFLECT_Y = 1u << 1,           // F  (works only while in NDC)
+    FLAG_ASPECT = 1u << 2,              // Q
+    FLAG_PERSPECTIVE_CORRECT = 1u << 3, // P
+    FLAG_PAUSE = 1u << 4,               // SPACE
+    FLAG_COLOR_MODE = 1u << 5,          // C
+    FLAG_TEXTURE_MODE = 1u << 6         // T
 };
 static unsigned int gFlags = FLAG_ASPECT | FLAG_COLOR_MODE;
 
 #define NDC_SPACE() ((gFlags & FLAG_NDC) != 0)
-#define ANISOTROPIC() ((gFlags & FLAG_ASPECT) != 0)
+#define REFLECT_Y() ((gFlags & FLAG_REFLECT_Y) != 0)
+#define ASPECT_CORRECT() ((gFlags & FLAG_ASPECT) != 0)
 #define PERSPECTIVE_CORRECT() ((gFlags & FLAG_PERSPECTIVE_CORRECT) != 0)
 #define PAUSED() ((gFlags & FLAG_PAUSE) != 0)
 #define COLOR_MODE() ((gFlags & FLAG_COLOR_MODE) != 0)
@@ -39,21 +42,32 @@ static unsigned int gFlags = FLAG_ASPECT | FLAG_COLOR_MODE;
         if (IsKeyPressed(K)) gFlags ^= (F);                                                                                                                    \
     } while (0)
 
-static float blendFactor(float deltaTime)
+static float spaceBlendFactor(float deltaTime)
 {
     static float blend = 0.0f;
-    if (deltaTime > 0.0f) blend = Clamp(blend + (NDC_SPACE() ? 1.0f : -1.0f) * 6.5f * deltaTime, 0.0f, 1.0f);
+    if (deltaTime > 0.0f) blend = Clamp(blend + (NDC_SPACE() ? 1.0f : -1.0f) * BLEND_SCALAR * deltaTime, 0.0f, 1.0f);
     return blend;
 }
 
 static float aspectBlendFactor(float deltaTime)
 {
     static float blend = 0.0f;
-    if (deltaTime > 0.0f) blend = Clamp(blend + (ANISOTROPIC() ? 1.0f : -1.0f) * 6.5f * deltaTime, 0.0f, 1.0f);
+    if (deltaTime > 0.0f) blend = Clamp(blend + (ASPECT_CORRECT() ? 1.0f : -1.0f) * BLEND_SCALAR * deltaTime, 0.0f, 1.0f);
     return blend;
 }
 
-//TODO: update color coding on the state of the toggles, not only the text but the color of the ndc cube for example and stuff like that
+static float reflectBlendFactor(float deltaTime)
+{
+    static float blend = 0.0f;
+    if (deltaTime > 0.0f)
+    {
+        float target = (NDC_SPACE() && REFLECT_Y()) ? 1.0f : 0.0f;
+        float dir = (blend < target) ? 1.0f : (blend > target) ? -1.0f : 0.0f;
+        blend = Clamp(blend + dir * BLEND_SCALAR * deltaTime, 0.0f, 1.0f);
+    }
+    return blend;
+}
+
 #define BAHAMA_BLUE CLITERAL(Color){0, 102, 153, 255}
 #define SUNFLOWER CLITERAL(Color){255, 204, 153, 255}
 #define PALE_CANARY CLITERAL(Color){255, 255, 153, 255}
@@ -72,7 +86,7 @@ static void drawSpatialWire(Mesh spatialWire);
 static void drawModelFilled(Model *model, Texture2D texture, float rotation);
 static void drawWiresAndPoints(Model *model, float rotation);
 
-static void drawNearPlanePoints(Camera3D *main, float near, Model *nearPlanePointsModel, Mesh *mesh, float rotation);
+static void drawNearPlanePoints(Camera3D *main, float aspect, float near, Model *nearPlanePointsModel, Mesh *mesh, float rotation);
 static void drawNearPlane(
     Camera3D *main, float aspect, float near, Model spatialWireModel, Mesh *mesh, Texture2D meshTexture, Texture2D perspectiveCorrectTexture, float rotation);
 
@@ -108,23 +122,16 @@ int main(void)
     jugemu.projection = CAMERA_PERSPECTIVE;
 
     float meshRotation = 0.0f;
-    //TODO:
-    // 1. add proper clipping demo to the target meshes to show how it works with the spaces (i.e. through moving the meshes or the targeted camera)
-    // 2. better onscreen annotations for what is happening (like spatial text labeling concepts)
-    // 3. add better toggling and space navigation (currently jugemus settings might be borked for proper fps nav)
-    // 4. improve the code didactic, now that clean up has been done, things have been deptht in order of fixed function visualization flow
-    // 5. improve the blending intutiion, AND FIX THE NDC SPACE REFLECTION VISUALIZATION (MESH IS NOT REFLECTING SAME AS IMAGE)
-    //   - I think that the anitropy should have a better ghosting effect of what it looks like to not be aspect correct,and also stages in ndc should only be toggleable in order?
 
     // Model worldModel = LoadModelFromMesh(GenMeshCube(1.0f, 1.0f, 1.0f));
     // Image textureImage = GenImageChecked(4, 4, 1, 1, BLACK, WHITE);
 
-    Model worldModel = LoadModelFromMesh(GenMeshSphere(0.5, 8, 8));
-    Image textureImage = GenImageChecked(16, 16, 1, 1, BLACK, WHITE);
+    // Model worldModel = LoadModelFromMesh(GenMeshSphere(0.5, 8, 8));
+    // Image textureImage = GenImageChecked(16, 16, 1, 1, BLACK, WHITE);
 
     // Model worldModel = LoadModelFromMesh(GenMeshKnot(1.0f, 1.0f, 8, 64));
-    // Model worldModel = LoadModelFromMesh(GenMeshKnot(1.0f, 1.0f, 16, 128));
-    // Image textureImage = GenImageChecked(32, 32, 1, 1, BLACK, WHITE);
+    Model worldModel = LoadModelFromMesh(GenMeshKnot(1.0f, 1.0f, 16, 128));
+    Image textureImage = GenImageChecked(32, 32, 1, 1, BLACK, WHITE);
 
     Texture2D meshTexture = LoadTextureFromImage(textureImage);
     UnloadImage(textureImage);
@@ -156,7 +163,6 @@ int main(void)
 
     Texture2D perspectiveCorrectTexture = {0}; //TODO: still wacky to do this and pass by reference everywhere i dont like that
     Mesh spatialWire = GenMeshCube(1.0f, 1.0f, 1.0f);
-    // showOnlyFrontFace(&spatialWire);
     spatialWire.colors = (unsigned char *)RL_CALLOC(spatialWire.vertexCount, sizeof(Color));
     for (int i = 0; i < spatialWire.vertexCount; i++) ((Color *)spatialWire.colors)[i] = (Color){255, 255, 255, 0};
     for (int i = 0; i < 4; i++) ((Color *)spatialWire.colors)[i].a = 255;
@@ -165,6 +171,7 @@ int main(void)
     {
         aspect = (float)GetScreenWidth() / (float)GetScreenHeight();
         TOGGLE(KEY_N, FLAG_NDC);
+        if (NDC_SPACE()) TOGGLE(KEY_F, FLAG_REFLECT_Y);
         TOGGLE(KEY_Q, FLAG_ASPECT);
         TOGGLE(KEY_P, FLAG_PERSPECTIVE_CORRECT);
         TOGGLE(KEY_SPACE, FLAG_PAUSE);
@@ -174,8 +181,9 @@ int main(void)
         moveJugemuOrbital(&jugemu, GetFrameTime());
         if (!PAUSED()) meshRotation -= ANGULAR_VELOCITY * GetFrameTime();
         worldToNDCSpace(&main, aspect, near, far, &worldModel, &ndcModel, meshRotation);
-        float blend = blendFactor(GetFrameTime());
+        float blend = spaceBlendFactor(GetFrameTime());
         aspectBlendFactor(GetFrameTime());
+        reflectBlendFactor(GetFrameTime());
         for (int i = 0; i < ndcModel.meshes[0].vertexCount; ++i)
         {
             float worldX = worldModel.meshes[0].vertices[3 * i + 0], worldY = worldModel.meshes[0].vertices[3 * i + 1],
@@ -198,7 +206,7 @@ int main(void)
         drawSpatialWire(spatialWire);
         drawModelFilled(displayModel, meshTexture, meshRotation);
         drawWiresAndPoints(displayModel, meshRotation);
-        drawNearPlanePoints(&main, near, &nearPlanePointsModel, displayMesh, meshRotation);
+        drawNearPlanePoints(&main, aspect, near, &nearPlanePointsModel, displayMesh, meshRotation);
         drawNearPlane(&main, aspect, near, spatialWireModel, displayMesh, meshTexture, perspectiveCorrectTexture, meshRotation);
         EndMode3D();
 
@@ -206,8 +214,13 @@ int main(void)
         DrawText("N: NDC | Q: ASPECT | P: PERSPECTIVE | C: COLOR | T: TEXTURE", 12, 14, 20, PALE_CANARY);
         DrawText("SPACE:", 12, 66, 20, PALE_CANARY);
         DrawText(NDC_SPACE() ? "NDC" : "WORLD", 180, 66, 20, NDC_SPACE() ? ANAKIWA : NEON_CARROT);
+        if (NDC_SPACE())
+        {
+            DrawText("REFLECT: ", 250, 66, 20, PALE_CANARY);
+            DrawText(REFLECT_Y() ? "Y_DOWN" : "Y_UP", 360, 66, 20, REFLECT_Y() ? ANAKIWA : NEON_CARROT);
+        }
         DrawText("ASPECT:", 12, 92, 20, PALE_CANARY);
-        DrawText(ANISOTROPIC() ? "ANISOTROPIC" : "ISOTROPIC", 180, 92, 20, ANISOTROPIC() ? MARINER : PALE_CANARY);
+        DrawText(ASPECT_CORRECT() ? "ANISOTROPIC" : "ISOTROPIC", 180, 92, 20, ASPECT_CORRECT() ? MARINER : PALE_CANARY);
         DrawText("TEXTURE:", 12, 118, 20, PALE_CANARY);
         DrawText(TEXTURE_MODE() ? "ON" : "OFF", 180, 118, 20, TEXTURE_MODE() ? ANAKIWA : CHESTNUT_ROSE);
         DrawText("PERSPECTIVE:", 12, 144, 20, PALE_CANARY);
@@ -253,19 +266,17 @@ static void updateSpatialWire(Camera3D *main, float aspect, float near, float fa
     float halfHNear = near * tanf(halfFovy);
     float halfHFar = far * tanf(halfFovy);
 
-    float aBlend = aspectBlendFactor(0.0f);
-    float halfWNear = Lerp(halfHNear, halfHNear * aspect, aBlend);
-    float halfWFar = Lerp(halfHFar, halfHFar * aspect, aBlend);
+    float halfWNear = Lerp(halfHNear, halfHNear * aspect, aspectBlendFactor(0.0f));
+    float halfWFar = Lerp(halfHFar, halfHFar * aspect, aspectBlendFactor(0.0f));
 
     Vector3 centerNear = Vector3Add(main->position, Vector3Scale(depth, near));
     float halfDepthWorld = 0.5f * (far - near);
-    float halfDepthNdc = Lerp(halfHNear, 0.5f * (far - near), aBlend);
-    float sBlend = blendFactor(0.0f);
-    float halfDepth = Lerp(halfDepthWorld, halfDepthNdc, sBlend);
+    float halfDepthNdc = Lerp(halfHNear, 0.5f * (far - near), aspectBlendFactor(0.0f));
+    float halfDepth = Lerp(halfDepthWorld, halfDepthNdc, spaceBlendFactor(0.0f));
 
     float depthSpan = 2.0f * halfDepth;
-    float farHalfW = Lerp(halfWFar, halfWNear, sBlend);
-    float farHalfH = Lerp(halfHFar, halfHNear, sBlend);
+    float farHalfW = Lerp(halfWFar, halfWNear, spaceBlendFactor(0.0f));
+    float farHalfH = Lerp(halfHFar, halfHNear, spaceBlendFactor(0.0f));
 
     for (int i = 0; i < spatialWire->vertexCount; ++i)
     {
@@ -286,13 +297,12 @@ static void updateSpatialWire(Camera3D *main, float aspect, float near, float fa
 
 static void drawSpatialWire(Mesh spatialWire)
 {
-    //DrawModelWiresEx(spatialWireModel, MODEL_POS, (Vector3){0, 1, 0}, 0.0f, MODEL_SCALE, WHITE);
     static const int frontFace[4][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}};
     static const int backFace[4][2] = {{4, 5}, {5, 6}, {6, 7}, {7, 4}};
     static const int connectingFaces[4][2] = {{0, 4}, {1, 7}, {2, 6}, {3, 5}};
     static const int (*faces[3])[2] = {frontFace, backFace, connectingFaces};
     Color near = NDC_SPACE() ? ANAKIWA : NEON_CARROT;
-    Color ribs = ANISOTROPIC() ? MARINER : PALE_CANARY;
+    Color ribs = ASPECT_CORRECT() ? MARINER : PALE_CANARY;
     Color far = PERSPECTIVE_CORRECT() ? ANAKIWA : HOPBUSH; //TODO: silly
     for (int i = 0; i < 3; i++)
         for (int j = 0; j < 4; j++)
@@ -350,61 +360,6 @@ static Vector3 translateRotateScale(int inverse, Vector3 coordinate, Vector3 pos
     return Vector3Transform(coordinate, result);
 }
 
-static void drawNearPlanePoints(Camera3D *main, float near, Model *nearPlanePointsModel, Mesh *mesh, float rotation)
-{
-    Mesh *nearPlanePointsMesh = &nearPlanePointsModel->meshes[0];
-    const int capacity = mesh->triangleCount * 3;
-    int writtenVertices = 0;
-    Vector3 depth, right, up;
-    basisVector(main, &depth, &right, &up);
-    float sBlend = blendFactor(0.0f);
-    Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(depth, near));
-
-    for (int i = 0; i < mesh->triangleCount; i++)
-    {
-        int ia = mesh->indices ? mesh->indices[3 * i + 0] : 3 * i + 0;
-        int ib = mesh->indices ? mesh->indices[3 * i + 1] : 3 * i + 1;
-        int ic = mesh->indices ? mesh->indices[3 * i + 2] : 3 * i + 2;
-        Vector3 a = (Vector3){mesh->vertices[3 * ia + 0], mesh->vertices[3 * ia + 1], mesh->vertices[3 * ia + 2]};
-        Vector3 b = (Vector3){mesh->vertices[3 * ib + 0], mesh->vertices[3 * ib + 1], mesh->vertices[3 * ib + 2]};
-        Vector3 c = (Vector3){mesh->vertices[3 * ic + 0], mesh->vertices[3 * ic + 1], mesh->vertices[3 * ic + 2]};
-        a = translateRotateScale(0, a, MODEL_POS, MODEL_SCALE, rotation);
-        b = translateRotateScale(0, b, MODEL_POS, MODEL_SCALE, rotation);
-        c = translateRotateScale(0, c, MODEL_POS, MODEL_SCALE, rotation);
-
-        //test if front facing or not
-        if (Vector3DotProduct(Vector3Normalize(Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, a))), depth) > 0.0f)
-        {
-            continue;
-        }
-
-        Vector3 hits[3] = {
-            nearPlaneIntersection(main, near, a),
-            nearPlaneIntersection(main, near, b),
-            nearPlaneIntersection(main, near, c),
-        };
-
-        for (int j = 0; j < 3 && writtenVertices < capacity; ++j)
-        {
-            Vector3 worldV = (Vector3[]){a, b, c}[j];
-            Vector3 toPlane = Vector3Subtract(hits[j], centerNearPlane);
-            float x = Vector3DotProduct(toPlane, right);
-            float y = Vector3DotProduct(toPlane, up);
-            Vector3 reflected = Vector3Add(centerNearPlane, Vector3Add(Vector3Scale(right, x), Vector3Scale(up, -y)));
-            Vector3 blendedHit = Vector3Lerp(hits[j], reflected, sBlend);
-            DrawLine3D(worldV, blendedHit, (Color){RED_DAMASK.r, RED_DAMASK.g, RED_DAMASK.b, 20});
-            nearPlanePointsMesh->vertices[3 * writtenVertices + 0] = blendedHit.x;
-            nearPlanePointsMesh->vertices[3 * writtenVertices + 1] = blendedHit.y;
-            nearPlanePointsMesh->vertices[3 * writtenVertices + 2] = blendedHit.z;
-            writtenVertices++;
-        }
-    }
-
-    nearPlanePointsMesh->vertexCount = writtenVertices;
-    rlSetPointSize(3.0f);
-    DrawModelPoints(*nearPlanePointsModel, MODEL_POS, 1.0f, LILAC);
-}
-
 static void drawNearPlane(
     Camera3D *main, float aspect, float near, Model spatialWireModel, Mesh *mesh, Texture2D meshTexture, Texture2D perspectiveCorrectTexture, float rotation)
 {
@@ -431,9 +386,8 @@ static void worldToNDCSpace(Camera3D *main, float aspect, float near, float far,
     basisVector(main, &depth, &right, &up);
     float halfFovy = DEG2RAD * main->fovy * 0.5f;
     float halfHNear = near * tanf(halfFovy);
-    float aBlend = aspectBlendFactor(0.0f);
-    float halfWNear = Lerp(halfHNear, halfHNear * aspect, aBlend);
-    float halfDepthNDC = Lerp(halfHNear, 0.5f * (far - near), aBlend);
+    float halfWNear = Lerp(halfHNear, halfHNear * aspect, aspectBlendFactor(0.0f));
+    float halfDepthNDC = Lerp(halfHNear, 0.5f * (far - near), aspectBlendFactor(0.0f));
     Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(depth, near));
     Vector3 centerNDCCube = Vector3Add(centerNearPlane, Vector3Scale(depth, halfDepthNDC));
     Mesh *worldMesh = &world->meshes[0];
@@ -464,21 +418,71 @@ static void worldToNDCSpace(Camera3D *main, float aspect, float near, float far,
     }
 }
 
-static Vector3 aspectCorrectNearPlane(Vector3 hit, Vector3 center, Vector3 right, Vector3 up, float xScale)
+static Vector3 aspectCorrectAndReflectNearPlane(Vector3 hit, Vector3 center, Vector3 right, Vector3 up, float xAspect, float yReflect)
 {
     Vector3 centerDistance = Vector3Subtract(hit, center);
     float x = Vector3DotProduct(centerDistance, right);
     float y = Vector3DotProduct(centerDistance, up);
-    return Vector3Add(center, Vector3Add(Vector3Scale(right, x * xScale), Vector3Scale(up, y)));
+    return Vector3Add(center, Vector3Add(Vector3Scale(right, x * xAspect), Vector3Scale(up, y * yReflect)));
+}
+
+static void drawNearPlanePoints(Camera3D *main, float aspect, float near, Model *nearPlanePointsModel, Mesh *mesh, float rotation)
+{
+    Mesh *nearPlanePointsMesh = &nearPlanePointsModel->meshes[0];
+    const int capacity = mesh->triangleCount * 3;
+    int writtenVertices = 0;
+    Vector3 depth, right, up;
+    basisVector(main, &depth, &right, &up);
+    Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(depth, near));
+    const float xAspect = Lerp(1.0f / aspect, 1.0f, aspectBlendFactor(0.0f));
+    const float yReflect = Lerp(1.0f, -1.0f, reflectBlendFactor(0.0f));
+    for (int i = 0; i < mesh->triangleCount; i++)
+    {
+        int ia = mesh->indices ? mesh->indices[3 * i + 0] : 3 * i + 0;
+        int ib = mesh->indices ? mesh->indices[3 * i + 1] : 3 * i + 1;
+        int ic = mesh->indices ? mesh->indices[3 * i + 2] : 3 * i + 2;
+        Vector3 a = (Vector3){mesh->vertices[3 * ia + 0], mesh->vertices[3 * ia + 1], mesh->vertices[3 * ia + 2]};
+        Vector3 b = (Vector3){mesh->vertices[3 * ib + 0], mesh->vertices[3 * ib + 1], mesh->vertices[3 * ib + 2]};
+        Vector3 c = (Vector3){mesh->vertices[3 * ic + 0], mesh->vertices[3 * ic + 1], mesh->vertices[3 * ic + 2]};
+        a = translateRotateScale(0, a, MODEL_POS, MODEL_SCALE, rotation);
+        b = translateRotateScale(0, b, MODEL_POS, MODEL_SCALE, rotation);
+        c = translateRotateScale(0, c, MODEL_POS, MODEL_SCALE, rotation);
+        Vector3 *trianglePoints = (Vector3[]){a, b, c};
+        //test if front facing or not
+        if (Vector3DotProduct(Vector3Normalize(Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, a))), depth) > 0.0f)
+        {
+            continue;
+        }
+
+        Vector3 hits[3] = {
+            nearPlaneIntersection(main, near, a),
+            nearPlaneIntersection(main, near, b),
+            nearPlaneIntersection(main, near, c),
+        };
+
+        for (int j = 0; j < 3 && writtenVertices < capacity; ++j)
+        {
+            Vector3 corrected = aspectCorrectAndReflectNearPlane(hits[j], centerNearPlane, right, up, xAspect, yReflect);
+            DrawLine3D(trianglePoints[j], corrected, (Color){RED_DAMASK.r, RED_DAMASK.g, RED_DAMASK.b, 20});
+            nearPlanePointsMesh->vertices[3 * writtenVertices + 0] = corrected.x;
+            nearPlanePointsMesh->vertices[3 * writtenVertices + 1] = corrected.y;
+            nearPlanePointsMesh->vertices[3 * writtenVertices + 2] = corrected.z;
+            writtenVertices++;
+        }
+    }
+
+    nearPlanePointsMesh->vertexCount = writtenVertices;
+    rlSetPointSize(3.0f);
+    DrawModelPoints(*nearPlanePointsModel, MODEL_POS, 1.0f, LILAC);
 }
 
 static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near, Mesh *mesh, Texture2D meshTexture, float rotation)
 {
-    //TODO: the NDC space is not working here things get drawn upside down....
     Vector3 depth, right, up;
     basisVector(main, &depth, &right, &up);
     Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(depth, near));
-    float xScale = Lerp(1.0f / aspect, 1.0f, aspectBlendFactor(0.0f));
+    float xAspect = Lerp(1.0f / aspect, 1.0f, aspectBlendFactor(0.0f));
+    float yReflect = Lerp(1.0f, -1.0f, reflectBlendFactor(0.0f));
     rlColor4ub(WHITE.r, WHITE.g, WHITE.b, WHITE.a);
     if (TEXTURE_MODE())
         rlEnableTexture(meshTexture.id);
@@ -506,21 +510,27 @@ static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near
         vertexB = translateRotateScale(0, vertexB, MODEL_POS, MODEL_SCALE, rotation);
         vertexC = translateRotateScale(0, vertexC, MODEL_POS, MODEL_SCALE, rotation);
 
-        vertexA = aspectCorrectNearPlane(nearPlaneIntersection(main, near, vertexA), centerNearPlane, right, up, xScale);
-        vertexB = aspectCorrectNearPlane(nearPlaneIntersection(main, near, vertexB), centerNearPlane, right, up, xScale);
-        vertexC = aspectCorrectNearPlane(nearPlaneIntersection(main, near, vertexC), centerNearPlane, right, up, xScale);
+        vertexA = aspectCorrectAndReflectNearPlane(nearPlaneIntersection(main, near, vertexA), centerNearPlane, right, up, xAspect, yReflect);
+        vertexB = aspectCorrectAndReflectNearPlane(nearPlaneIntersection(main, near, vertexB), centerNearPlane, right, up, xAspect, yReflect);
+        vertexC = aspectCorrectAndReflectNearPlane(nearPlaneIntersection(main, near, vertexC), centerNearPlane, right, up, xAspect, yReflect);
 
         if (COLOR_MODE()) rlColor4ub(mesh->colors[4 * ia + 0], mesh->colors[4 * ia + 1], mesh->colors[4 * ia + 2], mesh->colors[4 * ia + 3]);
         if (TEXTURE_MODE()) rlTexCoord2f(mesh->texcoords[2 * ia + 0], mesh->texcoords[2 * ia + 1]);
         rlVertex3f(vertexA.x, vertexA.y, vertexA.z);
 
-        if (COLOR_MODE()) rlColor4ub(mesh->colors[4 * ib + 0], mesh->colors[4 * ib + 1], mesh->colors[4 * ib + 2], mesh->colors[4 * ib + 3]);
-        if (TEXTURE_MODE()) rlTexCoord2f(mesh->texcoords[2 * ib + 0], mesh->texcoords[2 * ib + 1]);
-        rlVertex3f(vertexB.x, vertexB.y, vertexB.z);
+        int i2 = NDC_SPACE() && REFLECT_Y() ? ic : ib;
+        Vector3 vertex2 = NDC_SPACE() && REFLECT_Y() ? vertexC : vertexB;
 
-        if (COLOR_MODE()) rlColor4ub(mesh->colors[4 * ic + 0], mesh->colors[4 * ic + 1], mesh->colors[4 * ic + 2], mesh->colors[4 * ic + 3]);
-        if (TEXTURE_MODE()) rlTexCoord2f(mesh->texcoords[2 * ic + 0], mesh->texcoords[2 * ic + 1]);
-        rlVertex3f(vertexC.x, vertexC.y, vertexC.z);
+        if (COLOR_MODE()) rlColor4ub(mesh->colors[4 * i2 + 0], mesh->colors[4 * i2 + 1], mesh->colors[4 * i2 + 2], mesh->colors[4 * i2 + 3]);
+        if (TEXTURE_MODE()) rlTexCoord2f(mesh->texcoords[2 * i2 + 0], mesh->texcoords[2 * i2 + 1]);
+        rlVertex3f(vertex2.x, vertex2.y, vertex2.z);
+
+        int i3 = NDC_SPACE() && REFLECT_Y() ? ib : ic;
+        Vector3 vertex3 = NDC_SPACE() && REFLECT_Y() ? vertexB : vertexC;
+
+        if (COLOR_MODE()) rlColor4ub(mesh->colors[4 * i3 + 0], mesh->colors[4 * i3 + 1], mesh->colors[4 * i3 + 2], mesh->colors[4 * i3 + 3]);
+        if (TEXTURE_MODE()) rlTexCoord2f(mesh->texcoords[2 * i3 + 0], mesh->texcoords[2 * i3 + 1]);
+        rlVertex3f(vertex3.x, vertex3.y, vertex3.z);
     }
 
     rlEnd();
@@ -530,7 +540,6 @@ static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near
 
 static void perspectiveCorrectCapture(Camera3D *main, Model *model, Texture2D meshTexture, Texture2D *perspectiveCorrectTexture, float rotation)
 {
-    //TODO: the NDC space is not working here things get drawn upside down....
     unsigned char *cacheVertexColors = model->meshes[0].colors;
     if (TEXTURE_MODE() && !COLOR_MODE()) model->meshes[0].colors = NULL;
     ClearBackground(BLACK);
@@ -556,7 +565,9 @@ static void perspectiveCorrectCapture(Camera3D *main, Model *model, Texture2D me
     EndMode3D();
     Image mask = LoadImageFromScreen();
     alphaMaskPunchOut(&rgba, &mask, 1);
-    ImageFlipVertical(&rgba); //TODO: dont miss this, could show it properly with NDC space funkyness... still a lot of pedagogy needs to be reorganized....
+    ImageFlipVertical(&rgba); //TODO: still a lot of pedagogy needs to be reorganized.... fix emphasis
+    //TODO: FLIP AGAIN... it works visually i think, but not clear enough, and also hacked/ugly
+    if (NDC_SPACE() && REFLECT_Y()) ImageFlipVertical(&rgba);
     if (perspectiveCorrectTexture->id != 0)
         UpdateTexture(*perspectiveCorrectTexture, rgba.data);
     else
