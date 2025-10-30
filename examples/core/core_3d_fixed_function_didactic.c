@@ -5,16 +5,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
-
 //TODO list:
-// 1. add proper clipping to the target meshes to show how it works with the spaces
-//   - move mesh out of clip planes or allow moving the main camera's target away from the meshes
+// 1. add proper clipping to the target meshes to show intuition there (e.g. move mesh out of clip planes or allow moving the main camera's target away from the meshes)
 // 2. improve didactic annotations (ideally with spatial labeling rather than simple flat screen overlay)
-// 3. improve code didactic, code should read in order of fixed function staging
-// 4. add scripted toggling/navigation of ordered fixed function staging visualization
+// 3. improve code didactic, code should read in order of fixed function staging... kind of difficult
+// 4. add scripted toggling/navigation of ordered fixed function staging visualization (a play button?)
 // 5. add some sort of ghosting effect between fixed function stages, to emphasize previous stage perhaps)
-// 6. OPTIONALLY improve toggling and space navigation
-
+// 6. general improvements to toggling and space navigation
 #define BAHAMA_BLUE CLITERAL(Color){0, 102, 153, 255}
 #define SUNFLOWER CLITERAL(Color){255, 204, 153, 255}
 #define PALE_CANARY CLITERAL(Color){255, 255, 153, 255}
@@ -27,15 +24,15 @@
 #define RED_DAMASK CLITERAL(Color){221, 102, 68, 255}
 #define CHESTNUT_ROSE CLITERAL(Color){204, 102, 102, 255}
 
-static const int FONT_SIZE = 20;
-static const float ANGULAR_VELOCITY = 1.25f;
-static const float FOVY_PERSPECTIVE = 60.0f;
-static const float BLEND_SCALAR = 5.0f;
-static const Vector3 Y = {0.0f, 1.0f, 0.0f};
-static const Vector3 MODEL_POS = {0.0f, 0.0f, 0.0f};
-static const Vector3 MODEL_SCALE = {1.0f, 1.0f, 1.0f};
-static const Vector3 MAIN_POS = {0.0f, 0.0f, 2.0f};
-static const Vector3 JUGEMU_POS_ISO = {3.0f, 1.0f, 3.0f};
+static int FONT_SIZE = 20;
+static float ANGULAR_VELOCITY = 1.25f;
+static float FOVY_PERSPECTIVE = 60.0f;
+static float BLEND_SCALAR = 5.0f;
+static Vector3 Y = {0.0f, 1.0f, 0.0f};
+static Vector3 MODEL_POS = {0.0f, 0.0f, 0.0f};
+static Vector3 MODEL_SCALE = {1.0f, 1.0f, 1.0f};
+static Vector3 MAIN_POS = {0.0f, 0.0f, 2.0f};
+static Vector3 JUGEMU_POS_ISO = {3.0f, 1.0f, 3.0f};
 
 typedef unsigned short Triangle[3];
 enum
@@ -65,16 +62,16 @@ static unsigned int gFlags = FLAG_ASPECT | FLAG_COLOR_MODE;
     } while (0)
 
 static void orbitSpace(Camera3D *jugemu, float dt);
-static void basisVector(const Camera3D *main, Vector3 *depthOut, Vector3 *rightOut, Vector3 *upOut);
-static void worldToNDCSpace(const Camera3D *main, float aspect, float near, float far, const Model *world, const Model *ndc, float rotation);
-static void drawModelFilled(const Model *model, Texture2D texture, float rotation);
-static void drawModelWiresAndPoints(const Model *model, float rotation);
-static void drawNearPlanePoints(const Camera3D *main, float aspect, float near, const Model *nearPlanePointsModel, const Mesh *mesh, float rotation);
-static void updateSpatialFrame(const Camera3D *main, float aspect, float near, float far, const Mesh *spatialFrame);
+static void basisVector(Camera3D *main, Vector3 *depthOut, Vector3 *rightOut, Vector3 *upOut);
+static void worldToNDCSpace(Camera3D *main, float aspect, float near, float far, Model *world, Model *ndc, float rotation);
+static void drawModelFilled(Model *model, Texture2D texture, float rotation);
+static void drawModelWiresAndPoints(Model *model, float rotation);
+static void drawNearPlanePoints(Camera3D *main, float aspect, float near, Model *nearPlanePointsModel, Mesh *mesh, float rotation);
+static void updateSpatialFrame(Camera3D *main, float aspect, float near, float far, Mesh *spatialFrame);
 static void drawSpatialFrame(Mesh spatialFrame);
-static void perspectiveIncorrectCapture(const Camera3D *main, float aspect, float near, const Mesh *mesh, Texture2D meshTexture, float rotation);
-static void perspectiveCorrectCapture(const Camera3D *main, const Model *model, Texture2D meshTexture, Texture2D *perspectiveCorrectTexture, float rotation);
-static void alphaMaskPunchOut(Image *rgba, const Image *mask, unsigned char threshold);
+static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near, Mesh *mesh, Texture2D meshTexture, float rotation);
+static void perspectiveCorrectCapture(Camera3D *main, Model *model, Texture2D meshTexture, Texture2D *perspectiveCorrectTexture, float rotation);
+static void alphaMaskPunchOut(Image *rgba, Image *mask, unsigned char threshold);
 static void fillVertexColors(Mesh *mesh);
 static float spaceBlendFactor(float dt);
 static float aspectBlendFactor(float dt);
@@ -84,8 +81,8 @@ int main(void)
 {
     // Initialization
     //--------------------------------------------------------------------------------------
-    const int screenWidth = 800;
-    const int screenHeight = 450;
+    int screenWidth = 800;
+    int screenHeight = 450;
     InitWindow(screenWidth, screenHeight, "fixed function didactic");
     float aspect = (float)GetScreenWidth() / (float)GetScreenHeight();
     float meshRotation = 0.0f;
@@ -155,13 +152,12 @@ int main(void)
     SetTargetFPS(60);
     //--------------------------------------------------------------------------------------
 
-    // Main game loop
     while (!WindowShouldClose())    // Detect window close button or ESC key
     {
         // Update
         //----------------------------------------------------------------------------------
-        const float far = 3.0f;
-        const float near = 1.0f;
+        float far = 3.0f;
+        float near = 1.0f;
         aspect = (float)GetScreenWidth() / (float)GetScreenHeight();
         TOGGLE(KEY_N, FLAG_NDC);
         if (NDC_SPACE()) TOGGLE(KEY_F, FLAG_REFLECT_Y);
@@ -171,7 +167,7 @@ int main(void)
         TOGGLE(KEY_C, FLAG_COLOR_MODE);
         TOGGLE(KEY_T, FLAG_TEXTURE_MODE);
 
-        const float sBlend = spaceBlendFactor(GetFrameTime());
+        float sBlend = spaceBlendFactor(GetFrameTime());
         aspectBlendFactor(GetFrameTime());
         reflectBlendFactor(GetFrameTime());
 
@@ -183,7 +179,7 @@ int main(void)
 
         for (int i = 0; i < ndcModel.meshes[0].vertexCount; i++)
         {
-            const Vector3 *worldVertices = (const Vector3 *)worldModel.meshes[0].vertices;
+            Vector3 *worldVertices = (Vector3 *)worldModel.meshes[0].vertices;
             Vector3 *ndcVertices = (Vector3 *)ndcModel.meshes[0].vertices;
             ndcVertices[i].x = Lerp(worldVertices[i].x, ndcVertices[i].x, sBlend);
             ndcVertices[i].y = Lerp(worldVertices[i].y, ndcVertices[i].y, sBlend);
@@ -265,11 +261,11 @@ int main(void)
     return 0;
 }
 
-static void orbitSpace(Camera3D *jugemu, const float dt)
+static void orbitSpace(Camera3D *jugemu, float dt)
 {
     float radius = Vector3Length(jugemu->position);
     float azimuth = atan2f(jugemu->position.z, jugemu->position.x);
-    const float horizontalRadius = sqrtf(jugemu->position.x * jugemu->position.x + jugemu->position.z * jugemu->position.z);
+    float horizontalRadius = sqrtf(jugemu->position.x * jugemu->position.x + jugemu->position.z * jugemu->position.z);
     float elevation = atan2f(jugemu->position.y, horizontalRadius);
     if (IsKeyDown(KEY_LEFT)) azimuth += 1.5f * dt;
     if (IsKeyDown(KEY_RIGHT)) azimuth -= 1.5f * dt;
@@ -283,62 +279,61 @@ static void orbitSpace(Camera3D *jugemu, const float dt)
     jugemu->position.z = Clamp(radius, 0.25f, 10.0f) * cosf(elevation) * sinf(azimuth);
 }
 
-static void basisVector(const Camera3D *main, Vector3 *depthOut, Vector3 *rightOut, Vector3 *upOut)
+static void basisVector(Camera3D *main, Vector3 *depthOut, Vector3 *rightOut, Vector3 *upOut)
 {
-    const Vector3 depth = Vector3Normalize(Vector3Subtract(main->target, main->position));
-    const Vector3 right = Vector3Normalize(Vector3CrossProduct(depth, main->up));
-    const Vector3 up = Vector3Normalize(Vector3CrossProduct(right, depth));
+    Vector3 depth = Vector3Normalize(Vector3Subtract(main->target, main->position));
+    Vector3 right = Vector3Normalize(Vector3CrossProduct(depth, main->up));
+    Vector3 up = Vector3Normalize(Vector3CrossProduct(right, depth));
     *depthOut = depth;
     *rightOut = right;
     *upOut = up;
 }
 
-static Vector3 translateRotateScale(const int inverse, const Vector3 coordinate, const Vector3 pos, const Vector3 scale, const float rotation)
+static Vector3 translateRotateScale(int inverse, Vector3 coordinate, Vector3 pos, Vector3 scale, float rotation)
 {
-    const Matrix matrix = MatrixMultiply(MatrixMultiply(MatrixScale(scale.x, scale.y, scale.z), MatrixRotateY(rotation)), MatrixTranslate(pos.x, pos.y, pos.z));
-    const Matrix result = inverse ? MatrixInvert(matrix) : matrix;
+    Matrix matrix = MatrixMultiply(MatrixMultiply(MatrixScale(scale.x, scale.y, scale.z), MatrixRotateY(rotation)), MatrixTranslate(pos.x, pos.y, pos.z));
+    Matrix result = inverse ? MatrixInvert(matrix) : matrix;
     return Vector3Transform(coordinate, result);
 }
 
-static Vector3 intersect(const Camera3D *main, const float near, const Vector3 worldCoord)
+static Vector3 intersect(Camera3D *main, float near, Vector3 worldCoord)
 {
-    const Vector3 viewDir = Vector3Normalize(Vector3Subtract(main->target, main->position));
-    const Vector3 mainCameraToPoint = Vector3Subtract(worldCoord, main->position);
-    const float depthAlongView = Vector3DotProduct(mainCameraToPoint, viewDir);
+    Vector3 viewDir = Vector3Normalize(Vector3Subtract(main->target, main->position));
+    Vector3 mainCameraToPoint = Vector3Subtract(worldCoord, main->position);
+    float depthAlongView = Vector3DotProduct(mainCameraToPoint, viewDir);
     if (depthAlongView <= 0.0f) return Vector3Add(main->position, Vector3Scale(viewDir, near));
-    const float scaleToNear = near / depthAlongView;
+    float scaleToNear = near / depthAlongView;
     return Vector3Add(main->position, Vector3Scale(mainCameraToPoint, scaleToNear));
 }
 
-static void
-    worldToNDCSpace(const Camera3D *main, const float aspect, const float near, const float far, const Model *world, const Model *ndc, const float rotation)
+static void worldToNDCSpace(Camera3D *main, float aspect, float near, float far, Model *world, Model *ndc, float rotation)
 {
     Vector3 depth, right, up;
     basisVector(main, &depth, &right, &up);
-    const float halfHNear = near * tanf(DEG2RAD * main->fovy * 0.5f);
-    const float halfWNear = Lerp(halfHNear, halfHNear * aspect, aspectBlendFactor(0.0f));
-    const float halfDepthNDC = Lerp(halfHNear, 0.5f * (far - near), aspectBlendFactor(0.0f));
-    const Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(depth, near));
-    const Vector3 centerNDCCube = Vector3Add(centerNearPlane, Vector3Scale(depth, halfDepthNDC));
+    float halfHNear = near * tanf(DEG2RAD * main->fovy * 0.5f);
+    float halfWNear = Lerp(halfHNear, halfHNear * aspect, aspectBlendFactor(0.0f));
+    float halfDepthNDC = Lerp(halfHNear, 0.5f * (far - near), aspectBlendFactor(0.0f));
+    Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(depth, near));
+    Vector3 centerNDCCube = Vector3Add(centerNearPlane, Vector3Scale(depth, halfDepthNDC));
     for (int i = 0; i < world->meshes[0].vertexCount; i++)
     {
-        const Vector3 worldVertex = translateRotateScale(0, ((const Vector3 *)world->meshes[0].vertices)[i], MODEL_POS, MODEL_SCALE, rotation);
-        const float signedDepth = Vector3DotProduct(Vector3Subtract(worldVertex, main->position), depth);
-        const Vector3 intersectionCoord = intersect(main, near, worldVertex);
-        const Vector3 clipPlaneVector = Vector3Subtract(intersectionCoord, centerNearPlane);
-        const float xNDC = Vector3DotProduct(clipPlaneVector, right) / halfWNear;
-        const float yNDC = Vector3DotProduct(clipPlaneVector, up) / halfHNear;
-        const float zNDC = (far + near - 2.0f * far * near / signedDepth) / (far - near);
-        const Vector3 scaledRight = Vector3Scale(right, xNDC * halfWNear);
-        const Vector3 scaledUp = Vector3Scale(up, yNDC * halfHNear);
-        const Vector3 scaledDepth = Vector3Scale(depth, zNDC * halfDepthNDC);
-        const Vector3 offset = Vector3Add(Vector3Add(scaledRight, scaledUp), scaledDepth);
-        const Vector3 scaledNDCCoord = Vector3Add(centerNDCCube, offset);
+        Vector3 worldVertex = translateRotateScale(0, ((Vector3 *)world->meshes[0].vertices)[i], MODEL_POS, MODEL_SCALE, rotation);
+        float signedDepth = Vector3DotProduct(Vector3Subtract(worldVertex, main->position), depth);
+        Vector3 intersectionCoord = intersect(main, near, worldVertex);
+        Vector3 clipPlaneVector = Vector3Subtract(intersectionCoord, centerNearPlane);
+        float xNDC = Vector3DotProduct(clipPlaneVector, right) / halfWNear;
+        float yNDC = Vector3DotProduct(clipPlaneVector, up) / halfHNear;
+        float zNDC = (far + near - 2.0f * far * near / signedDepth) / (far - near);
+        Vector3 scaledRight = Vector3Scale(right, xNDC * halfWNear);
+        Vector3 scaledUp = Vector3Scale(up, yNDC * halfHNear);
+        Vector3 scaledDepth = Vector3Scale(depth, zNDC * halfDepthNDC);
+        Vector3 offset = Vector3Add(Vector3Add(scaledRight, scaledUp), scaledDepth);
+        Vector3 scaledNDCCoord = Vector3Add(centerNDCCube, offset);
         ((Vector3 *)ndc->meshes[0].vertices)[i] = translateRotateScale(1, scaledNDCCoord, MODEL_POS, MODEL_SCALE, rotation);
     }
 }
 
-static void drawModelFilled(const Model *model, const Texture2D texture, const float rotation)
+static void drawModelFilled(Model *model, Texture2D texture, float rotation)
 {
     if (!(COLOR_MODE() || TEXTURE_MODE())) return;
     Color *cacheColors = (Color *)model->meshes[0].colors;
@@ -349,10 +344,10 @@ static void drawModelFilled(const Model *model, const Texture2D texture, const f
     model->meshes[0].colors = (unsigned char *)cacheColors;
 }
 
-static void drawModelWiresAndPoints(const Model *model, const float rotation)
+static void drawModelWiresAndPoints(Model *model, float rotation)
 {
     Color *cacheColors = (Color *)model->meshes[0].colors;
-    const unsigned int cacheID = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id;
+    unsigned int cacheID = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id;
     model->meshes[0].colors = NULL;
     model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture.id = 0;
     DrawModelWiresEx(*model, MODEL_POS, Y, RAD2DEG * rotation, MODEL_SCALE, MARINER);
@@ -362,82 +357,80 @@ static void drawModelWiresAndPoints(const Model *model, const float rotation)
     model->meshes[0].colors = (unsigned char *)cacheColors;
 }
 
-static void updateSpatialFrame(const Camera3D *main, const float aspect, const float near, const float far, const Mesh *spatialFrame)
+static void updateSpatialFrame(Camera3D *main, float aspect, float near, float far, Mesh *spatialFrame)
 {
     Vector3 depth, right, up;
     basisVector(main, &depth, &right, &up);
-    const float halfHNear = near * tanf(DEG2RAD * main->fovy * 0.5f);
-    const float halfHFar = far * tanf(DEG2RAD * main->fovy * 0.5f);
-    const float halfWNear = Lerp(halfHNear, halfHNear * aspect, aspectBlendFactor(0.0f));
-    const float halfWFar = Lerp(halfHFar, halfHFar * aspect, aspectBlendFactor(0.0f));
-    const Vector3 centerNear = Vector3Add(main->position, Vector3Scale(depth, near));
-    const float halfDepthNdc = Lerp(halfHNear, 0.5f * (far - near), aspectBlendFactor(0.0f));
-    const float halfDepth = Lerp(0.5f * (far - near), halfDepthNdc, spaceBlendFactor(0.0f));
-    const float farHalfW = Lerp(halfWFar, halfWNear, spaceBlendFactor(0.0f));
-    const float farHalfH = Lerp(halfHFar, halfHNear, spaceBlendFactor(0.0f));
+    float halfHNear = near * tanf(DEG2RAD * main->fovy * 0.5f);
+    float halfHFar = far * tanf(DEG2RAD * main->fovy * 0.5f);
+    float halfWNear = Lerp(halfHNear, halfHNear * aspect, aspectBlendFactor(0.0f));
+    float halfWFar = Lerp(halfHFar, halfHFar * aspect, aspectBlendFactor(0.0f));
+    Vector3 centerNear = Vector3Add(main->position, Vector3Scale(depth, near));
+    float halfDepthNdc = Lerp(halfHNear, 0.5f * (far - near), aspectBlendFactor(0.0f));
+    float halfDepth = Lerp(0.5f * (far - near), halfDepthNdc, spaceBlendFactor(0.0f));
+    float farHalfW = Lerp(halfWFar, halfWNear, spaceBlendFactor(0.0f));
+    float farHalfH = Lerp(halfHFar, halfHNear, spaceBlendFactor(0.0f));
 
     for (int i = 0; i < spatialFrame->vertexCount; ++i)
     {
-        const Vector3 offset = Vector3Subtract(((Vector3 *)spatialFrame->vertices)[i], centerNear);
-        const float xSign = Vector3DotProduct(offset, right) >= 0.0f ? 1.0f : -1.0f;
-        const float ySign = Vector3DotProduct(offset, up) >= 0.0f ? 1.0f : -1.0f;
-        const float farMask = Vector3DotProduct(offset, depth) > halfDepth ? 1.0f : 0.0f;
-        const float finalHalfW = halfWNear + farMask * (farHalfW - halfWNear);
-        const float finalHalfH = halfHNear + farMask * (farHalfH - halfHNear);
-        const Vector3 center = Vector3Add(centerNear, Vector3Scale(depth, farMask * 2.0f * halfDepth));
+        Vector3 offset = Vector3Subtract(((Vector3 *)spatialFrame->vertices)[i], centerNear);
+        float xSign = Vector3DotProduct(offset, right) >= 0.0f ? 1.0f : -1.0f;
+        float ySign = Vector3DotProduct(offset, up) >= 0.0f ? 1.0f : -1.0f;
+        float farMask = Vector3DotProduct(offset, depth) > halfDepth ? 1.0f : 0.0f;
+        float finalHalfW = halfWNear + farMask * (farHalfW - halfWNear);
+        float finalHalfH = halfHNear + farMask * (farHalfH - halfHNear);
+        Vector3 center = Vector3Add(centerNear, Vector3Scale(depth, farMask * 2.0f * halfDepth));
         ((Vector3 *)spatialFrame->vertices)[i] = Vector3Add(center, Vector3Add(Vector3Scale(right, xSign * finalHalfW), Vector3Scale(up, ySign * finalHalfH)));
     }
 }
 
-static void drawSpatialFrame(const Mesh spatialFrame)
+static void drawSpatialFrame(Mesh spatialFrame)
 {
-    static const int frontFace[4][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}};
-    static const int backFace[4][2] = {{4, 5}, {5, 6}, {6, 7}, {7, 4}};
-    static const int connectingFaces[4][2] = {{0, 4}, {1, 7}, {2, 6}, {3, 5}};
-    static const int (*faces[3])[2] = {frontFace, backFace, connectingFaces};
+    static int frontFaces[4][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}};
+    static int backFaces[4][2] = {{4, 5}, {5, 6}, {6, 7}, {7, 4}};
+    static int ribFaces[4][2] = {{0, 4}, {1, 7}, {2, 6}, {3, 5}};
+    static int (*faces[3])[2] = {frontFaces, backFaces, ribFaces};
     for (int i = 0; i < 3; i++)
         for (int j = 0; j < 4; j++)
         {
-            const Vector3 startPosition = ((const Vector3 *)spatialFrame.vertices)[faces[i][j][0]];
-            const Vector3 endPosition = ((const Vector3 *)spatialFrame.vertices)[faces[i][j][1]];
+            Vector3 startPosition = ((Vector3 *)spatialFrame.vertices)[faces[i][j][0]];
+            Vector3 endPosition = ((Vector3 *)spatialFrame.vertices)[faces[i][j][1]];
             DrawLine3D(startPosition, endPosition, i == 0 ? NEON_CARROT : i == 1 ? EGGPLANT : HOPBUSH);
         }
 }
 
-static Vector3
-    aspectCorrectAndReflectNearPlane(const Vector3 hit, const Vector3 center, const Vector3 right, const Vector3 up, const float xAspect, const float yReflect)
+static Vector3 aspectCorrectAndReflectNearPlane(Vector3 intersect, Vector3 center, Vector3 right, Vector3 up, float xAspect, float yReflect)
 {
-    const Vector3 centerDistance = Vector3Subtract(hit, center);
-    const float x = Vector3DotProduct(centerDistance, right);
-    const float y = Vector3DotProduct(centerDistance, up);
+    Vector3 centerDistance = Vector3Subtract(intersect, center);
+    float x = Vector3DotProduct(centerDistance, right);
+    float y = Vector3DotProduct(centerDistance, up);
     return Vector3Add(center, Vector3Add(Vector3Scale(right, x * xAspect), Vector3Scale(up, y * yReflect)));
 }
 
-static void
-    drawNearPlanePoints(const Camera3D *main, const float aspect, const float near, const Model *nearPlanePointsModel, const Mesh *mesh, const float rotation)
+static void drawNearPlanePoints(Camera3D *main, float aspect, float near, Model *nearPlanePointsModel, Mesh *mesh, float rotation)
 {
     Vector3 depth, right, up;
     basisVector(main, &depth, &right, &up);
     int nearPlaneVertexCount = 0;
-    const int capacity = mesh->triangleCount * 3;
+    int capacity = mesh->triangleCount * 3;
     Mesh *nearPlanePointsMesh = &nearPlanePointsModel->meshes[0];
-    const Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(depth, near));
-    const float xAspect = Lerp(1.0f / aspect, 1.0f, aspectBlendFactor(0.0f));
-    const float yReflect = Lerp(1.0f, -1.0f, reflectBlendFactor(0.0f));
+    Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(depth, near));
+    float xAspect = Lerp(1.0f / aspect, 1.0f, aspectBlendFactor(0.0f));
+    float yReflect = Lerp(1.0f, -1.0f, reflectBlendFactor(0.0f));
     for (int i = 0; i < mesh->triangleCount; i++)
     {
-        const Vector3 *vertices = (Vector3 *)mesh->vertices;
-        const Triangle *triangles = (const Triangle *)mesh->indices;
-        const Vector3 a = translateRotateScale(0, vertices[triangles[i][0]], MODEL_POS, MODEL_SCALE, rotation);
-        const Vector3 b = translateRotateScale(0, vertices[triangles[i][1]], MODEL_POS, MODEL_SCALE, rotation);
-        const Vector3 c = translateRotateScale(0, vertices[triangles[i][2]], MODEL_POS, MODEL_SCALE, rotation);
-        // test if front facing or not (ugly one-liner -- comment out will ~double the rays)
+        Vector3 *vertices = (Vector3 *)mesh->vertices;
+        Triangle *triangles = (Triangle *)mesh->indices;
+        Vector3 a = translateRotateScale(0, vertices[triangles[i][0]], MODEL_POS, MODEL_SCALE, rotation);
+        Vector3 b = translateRotateScale(0, vertices[triangles[i][1]], MODEL_POS, MODEL_SCALE, rotation);
+        Vector3 c = translateRotateScale(0, vertices[triangles[i][2]], MODEL_POS, MODEL_SCALE, rotation);
+        // test if front facing or not (ugly one-liner -- comment out will ~double the rays, which is fine)
         if (Vector3DotProduct(Vector3Normalize(Vector3CrossProduct(Vector3Subtract(b, a), Vector3Subtract(c, a))), depth) > 0.0f) continue;
 
-        const Vector3 intersectionPoints[3] = {intersect(main, near, a), intersect(main, near, b), intersect(main, near, c)};
+        Vector3 intersectionPoints[3] = {intersect(main, near, a), intersect(main, near, b), intersect(main, near, c)};
         for (int j = 0; j < 3 && nearPlaneVertexCount < capacity; ++j)
         {
-            const Vector3 corrected = aspectCorrectAndReflectNearPlane(intersectionPoints[j], centerNearPlane, right, up, xAspect, yReflect);
+            Vector3 corrected = aspectCorrectAndReflectNearPlane(intersectionPoints[j], centerNearPlane, right, up, xAspect, yReflect);
             DrawLine3D((Vector3[]){a, b, c}[j], corrected, (Color){RED_DAMASK.r, RED_DAMASK.g, RED_DAMASK.b, 20});
             ((Vector3 *)nearPlanePointsMesh->vertices)[nearPlaneVertexCount] = corrected;
             nearPlaneVertexCount++;
@@ -449,15 +442,14 @@ static void
     DrawModelPoints(*nearPlanePointsModel, MODEL_POS, 1.0f, LILAC);
 }
 
-static void
-    perspectiveIncorrectCapture(const Camera3D *main, const float aspect, const float near, const Mesh *mesh, const Texture2D meshTexture, const float rotation)
+static void perspectiveIncorrectCapture(Camera3D *main, float aspect, float near, Mesh *mesh, Texture2D meshTexture, float rotation)
 {
     Vector3 depth, right, up;
     basisVector(main, &depth, &right, &up);
-    const Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(depth, near));
-    const float xAspect = Lerp(1.0f / aspect, 1.0f, aspectBlendFactor(0.0f));
-    const float yReflect = Lerp(1.0f, -1.0f, reflectBlendFactor(0.0f));
-    rlColor4ub(WHITE.r, WHITE.g, WHITE.b, WHITE.a);
+    Vector3 centerNearPlane = Vector3Add(main->position, Vector3Scale(depth, near));
+    float xAspect = Lerp(1.0f / aspect, 1.0f, aspectBlendFactor(0.0f));
+    float yReflect = Lerp(1.0f, -1.0f, reflectBlendFactor(0.0f));
+    rlColor4ub(WHITE.r, WHITE.g, WHITE.b, WHITE.a); // just to emphasize raylib Colors are ub 0~255 no floats
     if (TEXTURE_MODE())
         rlEnableTexture(meshTexture.id);
     else
@@ -472,10 +464,10 @@ static void
 
     for (int i = 0; i < mesh->triangleCount; i++)
     {
-        const Triangle *triangles = (const Triangle *)mesh->indices;
-        const Vector3 *vertices = (const Vector3 *)mesh->vertices;
-        const Color *colors = (const Color *)mesh->colors;
-        const Vector2 *texcoords = (const Vector2 *)mesh->texcoords;
+        Triangle *triangles = (Triangle *)mesh->indices;
+        Vector3 *vertices = (Vector3 *)mesh->vertices;
+        Color *colors = (Color *)mesh->colors;
+        Vector2 *texcoords = (Vector2 *)mesh->texcoords;
 
         Vector3 a = translateRotateScale(0, vertices[triangles[i][0]], MODEL_POS, MODEL_SCALE, rotation);
         Vector3 b = translateRotateScale(0, vertices[triangles[i][1]], MODEL_POS, MODEL_SCALE, rotation);
@@ -488,15 +480,15 @@ static void
         if (COLOR_MODE()) rlColor4ub(colors[triangles[i][0]].r, colors[triangles[i][0]].g, colors[triangles[i][0]].b, colors[triangles[i][0]].a);
         if (TEXTURE_MODE()) rlTexCoord2f(texcoords[triangles[i][0]].x, texcoords[triangles[i][0]].y);
         rlVertex3f(a.x, a.y, a.z);
-        // index winding to account for reflection toggle (will draw the inside of the geometry otherwise)
-        const int secondIndex = NDC_SPACE() && REFLECT_Y() ? triangles[i][2] : triangles[i][1];
-        const Vector3 secondVertex = NDC_SPACE() && REFLECT_Y() ? c : b;
+        // vertex winding!! to account for reflection toggle (will draw the inside of the geometry otherwise)
+        int secondIndex = NDC_SPACE() && REFLECT_Y() ? triangles[i][2] : triangles[i][1];
+        Vector3 secondVertex = NDC_SPACE() && REFLECT_Y() ? c : b;
         if (COLOR_MODE()) rlColor4ub(colors[secondIndex].r, colors[secondIndex].g, colors[secondIndex].b, colors[secondIndex].a);
         if (TEXTURE_MODE()) rlTexCoord2f(texcoords[secondIndex].x, texcoords[secondIndex].y);
         rlVertex3f(secondVertex.x, secondVertex.y, secondVertex.z);
 
-        const int thirdIndex = NDC_SPACE() && REFLECT_Y() ? triangles[i][1] : triangles[i][2];
-        const Vector3 thirdVertex = NDC_SPACE() && REFLECT_Y() ? b : c;
+        int thirdIndex = NDC_SPACE() && REFLECT_Y() ? triangles[i][1] : triangles[i][2];
+        Vector3 thirdVertex = NDC_SPACE() && REFLECT_Y() ? b : c;
         if (COLOR_MODE()) rlColor4ub(colors[thirdIndex].r, colors[thirdIndex].g, colors[thirdIndex].b, colors[thirdIndex].a);
         if (TEXTURE_MODE()) rlTexCoord2f(texcoords[thirdIndex].x, texcoords[thirdIndex].y);
         rlVertex3f(thirdVertex.x, thirdVertex.y, thirdVertex.z);
@@ -507,8 +499,7 @@ static void
     rlDisableWireMode();
 }
 
-static void
-    perspectiveCorrectCapture(const Camera3D *main, const Model *model, const Texture2D meshTexture, Texture2D *perspectiveCorrectTexture, const float rotation)
+static void perspectiveCorrectCapture(Camera3D *main, Model *model, Texture2D meshTexture, Texture2D *perspectiveCorrectTexture, float rotation)
 {
     unsigned char *cacheColors = model->meshes[0].colors;
     if (TEXTURE_MODE() && !COLOR_MODE()) model->meshes[0].colors = NULL;
@@ -516,7 +507,7 @@ static void
     ClearBackground(BLACK);
 
     BeginMode3D(*main);
-        const Texture2D previousTexture = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture;
+        Texture2D previousTexture = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture;
         model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = meshTexture;
         DrawModelEx(*model, MODEL_POS, Y, RAD2DEG * rotation, MODEL_SCALE, WHITE);
         model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = previousTexture;
@@ -529,8 +520,8 @@ static void
     ClearBackground(BLACK);
 
     BeginMode3D(*main);
-        const Texture2D cacheTexture = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture;
-        const Color cacheMaterialColor = model->materials[0].maps[MATERIAL_MAP_ALBEDO].color;
+        Texture2D cacheTexture = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture;
+        Color cacheMaterialColor = model->materials[0].maps[MATERIAL_MAP_ALBEDO].color;
         model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = (Texture2D){0};
         model->materials[0].maps[MATERIAL_MAP_ALBEDO].color = WHITE;
         DrawModelEx(*model, MODEL_POS, Y, RAD2DEG * rotation, MODEL_SCALE, WHITE);
@@ -538,10 +529,10 @@ static void
         model->materials[0].maps[MATERIAL_MAP_ALBEDO].color = cacheMaterialColor;
     EndMode3D();
 
-    const Image mask = LoadImageFromScreen();
+    Image mask = LoadImageFromScreen();
     alphaMaskPunchOut(&rgba, &mask, 1);
     ImageFlipVertical(&rgba);
-    if (NDC_SPACE() && REFLECT_Y()) ImageFlipVertical(&rgba); //TODO: FLIP AGAIN... it works visually i think, but not clear enough, and also hacked/ugly
+    if (NDC_SPACE() && REFLECT_Y()) ImageFlipVertical(&rgba); // FLIP AGAIN... it works visually, but is not clear and feels hacked/ugly
     if (perspectiveCorrectTexture->id != 0)
         UpdateTexture(*perspectiveCorrectTexture, rgba.data);
     else
@@ -551,39 +542,39 @@ static void
     UnloadImage(rgba);
 }
 
-static void alphaMaskPunchOut(Image *rgba, const Image *mask, const unsigned char threshold)
+static void alphaMaskPunchOut(Image *rgba, Image *mask, unsigned char threshold)
 {
     Image maskCopy = ImageCopy(*mask);
     ImageFormat(&maskCopy, PIXELFORMAT_UNCOMPRESSED_GRAYSCALE);
     ImageFormat(rgba, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
-    const unsigned char *maskGrayScale = maskCopy.data;
+    unsigned char *maskGrayScale = maskCopy.data;
     Color *colors = rgba->data;
-    const int pixelCount = rgba->width * rgba->height;
+    int pixelCount = rgba->width * rgba->height;
     for (size_t i = 0; i < pixelCount; ++i) colors[i].a = maskGrayScale[i] > threshold ? 255 : 0;
     UnloadImage(maskCopy);
 }
 
-static float spaceBlendFactor(const float dt)
+static float spaceBlendFactor(float dt)
 {
     static float blend = 0.0f;
     if (dt > 0.0f) blend = Clamp(blend + (NDC_SPACE() ? 1.0f : -1.0f) * BLEND_SCALAR * dt, 0.0f, 1.0f);
     return blend;
 }
 
-static float aspectBlendFactor(const float dt)
+static float aspectBlendFactor(float dt)
 {
     static float blend = 0.0f;
     if (dt > 0.0f) blend = Clamp(blend + (ASPECT_CORRECT() ? 1.0f : -1.0f) * BLEND_SCALAR * dt, 0.0f, 1.0f);
     return blend;
 }
 
-static float reflectBlendFactor(const float dt)
+static float reflectBlendFactor(float dt)
 {
     static float blend = 0.0f;
     if (dt > 0.0f)
     {
-        const float target = NDC_SPACE() && REFLECT_Y() ? 1.0f : 0.0f;
-        const float direction = blend < target ? 1.0f : blend > target ? -1.0f : 0.0f;
+        float target = NDC_SPACE() && REFLECT_Y() ? 1.0f : 0.0f;
+        float direction = blend < target ? 1.0f : blend > target ? -1.0f : 0.0f;
         blend = Clamp(blend + direction * BLEND_SCALAR * dt, 0.0f, 1.0f);
     }
     return blend;
@@ -593,16 +584,16 @@ static void fillVertexColors(Mesh *mesh)
 {
     if (!mesh->colors) mesh->colors = RL_CALLOC(mesh->vertexCount, sizeof(Color));
     Color *colors = (Color *)mesh->colors;
-    const Vector3 *vertices = (Vector3 *)mesh->vertices;
-    const BoundingBox bounds = GetMeshBoundingBox(*mesh);
+    Vector3 *vertices = (Vector3 *)mesh->vertices;
+    BoundingBox bounds = GetMeshBoundingBox(*mesh);
 
     for (int i = 0; i < mesh->vertexCount; ++i)
     {
-        const Vector3 vertex = vertices[i];
-        const float nx = (vertex.x - 0.5f * (bounds.min.x + bounds.max.x)) / (0.5f * (bounds.max.x - bounds.min.x));
-        const float ny = (vertex.y - 0.5f * (bounds.min.y + bounds.max.y)) / (0.5f * (bounds.max.y - bounds.min.y));
-        const float nz = (vertex.z - 0.5f * (bounds.min.z + bounds.max.z)) / (0.5f * (bounds.max.z - bounds.min.z));
-        const float len = sqrtf(nx * nx + ny * ny + nz * nz);
+        Vector3 vertex = vertices[i];
+        float nx = (vertex.x - 0.5f * (bounds.min.x + bounds.max.x)) / (0.5f * (bounds.max.x - bounds.min.x));
+        float ny = (vertex.y - 0.5f * (bounds.min.y + bounds.max.y)) / (0.5f * (bounds.max.y - bounds.min.y));
+        float nz = (vertex.z - 0.5f * (bounds.min.z + bounds.max.z)) / (0.5f * (bounds.max.z - bounds.min.z));
+        float len = sqrtf(nx * nx + ny * ny + nz * nz);
         colors[i] = (Color){lrintf(127.5f * (nx / len + 1.f)), lrintf(127.5f * (ny / len + 1.f)), lrintf(127.5f * (nz / len + 1.f)), 255};
     }
 }
