@@ -6,7 +6,7 @@
 #include <string.h>
 #include <stdbool.h>
 
-//TODO:
+//TODO list:
 // 1. add proper clipping to the target meshes to show how it works with the spaces
 //   - move mesh out of clip planes or allow moving the main camera's target away from the meshes
 // 2. improve didactic annotations (ideally with spatial labeling rather than simple flat screen overlay)
@@ -28,8 +28,6 @@
 #define CHESTNUT_ROSE CLITERAL(Color){204, 102, 102, 255}
 
 static const int FONT_SIZE = 20;
-static const int WIDTH = 800;
-static const int HEIGHT = 450;
 static const float ANGULAR_VELOCITY = 1.25f;
 static const float FOVY_PERSPECTIVE = 60.0f;
 static const float BLEND_SCALAR = 5.0f;
@@ -84,22 +82,28 @@ static float reflectBlendFactor(float dt);
 
 int main(void)
 {
-    InitWindow(WIDTH, HEIGHT, "fixed function didactic");
-    SetTargetFPS(60);
-    Camera3D main = {0};
+    // Initialization
+    //--------------------------------------------------------------------------------------
+    const int screenWidth = 800;
+    const int screenHeight = 450;
+    InitWindow(screenWidth, screenHeight, "fixed function didactic");
+    float aspect = (float)GetScreenWidth() / (float)GetScreenHeight();
+    float meshRotation = 0.0f;
+
+    Camera3D main = { 0 };
     main.position = MAIN_POS;
     main.target = MODEL_POS;
     main.up = Y;
     main.fovy = FOVY_PERSPECTIVE;
     main.projection = CAMERA_PERSPECTIVE;
-    float aspect = (float)GetScreenWidth() / (float)GetScreenHeight();
+
     Camera3D jugemu = (Camera3D){0};
     jugemu.position = JUGEMU_POS_ISO;
     jugemu.target = MODEL_POS;
     jugemu.up = Y;
     jugemu.fovy = FOVY_PERSPECTIVE;
     jugemu.projection = CAMERA_PERSPECTIVE;
-    float meshRotation = 0.0f;
+
     // Model worldModel = LoadModelFromMesh(GenMeshCube(1.0f, 1.0f, 1.0f));
     // Image textureImage = GenImageChecked(4, 4, 1, 1, BLACK, WHITE);
 
@@ -126,11 +130,11 @@ int main(void)
     ndcMesh.triangleCount = worldModel.meshes[0].triangleCount;
     ndcMesh.vertices = RL_CALLOC(ndcMesh.vertexCount, sizeof(Vector3));
     ndcMesh.texcoords = RL_CALLOC(ndcMesh.vertexCount, sizeof(Vector2));
-    ndcMesh.indices = RL_CALLOC(ndcMesh.triangleCount, sizeof(unsigned short[3]));
+    ndcMesh.indices = RL_CALLOC(ndcMesh.triangleCount, sizeof(Triangle));
     ndcMesh.colors = RL_CALLOC(ndcMesh.vertexCount, sizeof(Color));
     memcpy(ndcMesh.colors, worldModel.meshes[0].colors, ndcMesh.vertexCount * sizeof(Color));
     memcpy(ndcMesh.texcoords, worldModel.meshes[0].texcoords, ndcMesh.vertexCount * sizeof(Vector2));
-    memcpy(ndcMesh.indices, worldModel.meshes[0].indices, ndcMesh.triangleCount * sizeof(unsigned short[3]));
+    memcpy(ndcMesh.indices, worldModel.meshes[0].indices, ndcMesh.triangleCount * sizeof(Triangle));
     Model ndcModel = LoadModelFromMesh(ndcMesh);
 
     Mesh nearPlanePoints = (Mesh){0};
@@ -141,15 +145,21 @@ int main(void)
     worldModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = meshTexture;
     ndcModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = meshTexture;
 
-    Texture2D perspectiveCorrectTexture = {0};
+    Texture2D perspectiveCorrectTexture = (Texture2D){0};
     Mesh spatialFrame = GenMeshCube(1.0f, 1.0f, 1.0f);
     spatialFrame.colors = RL_CALLOC(spatialFrame.vertexCount, sizeof(Color));
     for (int i = 0; i < spatialFrame.vertexCount; i++) ((Color *)spatialFrame.colors)[i] = (Color){255, 255, 255, 0};
     for (int i = 0; i < 4; i++) ((Color *)spatialFrame.colors)[i].a = 255;
     Model spatialFrameModel = LoadModelFromMesh(spatialFrame);
 
-    while (!WindowShouldClose())
+    SetTargetFPS(60);
+    //--------------------------------------------------------------------------------------
+
+    // Main game loop
+    while (!WindowShouldClose())    // Detect window close button or ESC key
     {
+        // Update
+        //----------------------------------------------------------------------------------
         const float far = 3.0f;
         const float near = 1.0f;
         aspect = (float)GetScreenWidth() / (float)GetScreenHeight();
@@ -171,7 +181,7 @@ int main(void)
 
         worldToNDCSpace(&main, aspect, near, far, &worldModel, &ndcModel, meshRotation);
 
-        for (int i = 0; i < ndcModel.meshes[0].vertexCount; ++i)
+        for (int i = 0; i < ndcModel.meshes[0].vertexCount; i++)
         {
             const Vector3 *worldVertices = (const Vector3 *)worldModel.meshes[0].vertices;
             Vector3 *ndcVertices = (Vector3 *)ndcModel.meshes[0].vertices;
@@ -179,64 +189,79 @@ int main(void)
             ndcVertices[i].y = Lerp(worldVertices[i].y, ndcVertices[i].y, sBlend);
             ndcVertices[i].z = Lerp(worldVertices[i].z, ndcVertices[i].z, sBlend);
         }
+
         Model *displayModel = &ndcModel;
         Mesh *displayMesh = &ndcModel.meshes[0];
-        if (PERSPECTIVE_CORRECT() && TEXTURE_MODE()) perspectiveCorrectCapture(&main, displayModel, meshTexture, &perspectiveCorrectTexture, meshRotation);
 
-        BeginDrawing();
-
-        ClearBackground(BLACK);
-        BeginMode3D(jugemu);
-        Vector3 depth, right, up;
-        basisVector(&main, &depth, &right, &up);
-        DrawLine3D(main.position, Vector3Add(main.position, right), NEON_CARROT);
-        DrawLine3D(main.position, Vector3Add(main.position, up), LILAC);
-        DrawLine3D(main.position, Vector3Add(main.position, depth), MARINER);
-
-        updateSpatialFrame(&main, aspect, near, far, &spatialFrame);
-        drawSpatialFrame(spatialFrame);
-
-        drawModelFilled(displayModel, meshTexture, meshRotation);
-        drawModelWiresAndPoints(displayModel, meshRotation);
-
-        drawNearPlanePoints(&main, aspect, near, &nearPlanePointsModel, displayMesh, meshRotation);
         if (PERSPECTIVE_CORRECT() && TEXTURE_MODE())
         {
-            spatialFrameModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = perspectiveCorrectTexture;
-            DrawModel(spatialFrameModel, MODEL_POS, 1.0f, WHITE);
+            perspectiveCorrectCapture(&main, displayModel, meshTexture, &perspectiveCorrectTexture, meshRotation);
         }
-        else
-        {
-            perspectiveIncorrectCapture(&main, aspect, near, displayMesh, meshTexture, meshRotation);
-        }
-        EndMode3D();
 
-        DrawText("ARROWS: MOVE | SPACEBAR: PAUSE", 12, 12, FONT_SIZE, NEON_CARROT);
-        DrawText("W A : ZOOM", 12, 38, FONT_SIZE, NEON_CARROT);
-        DrawText("TEXTURE [ T ]:", 570, 12, FONT_SIZE, SUNFLOWER);
-        DrawText(TEXTURE_MODE() ? "ON" : "OFF", 740, 12, FONT_SIZE, TEXTURE_MODE() ? ANAKIWA : CHESTNUT_ROSE);
-        DrawText("COLORS [ C ]:", 570, 38, FONT_SIZE, SUNFLOWER);
-        DrawText(COLOR_MODE() ? "ON" : "OFF", 740, 38, FONT_SIZE, COLOR_MODE() ? ANAKIWA : CHESTNUT_ROSE);
-        DrawText("ASPECT [ Q ]:", 12, 392, FONT_SIZE, SUNFLOWER);
-        DrawText(ASPECT_CORRECT() ? "CORRECT" : "INCORRECT", 230, 392, FONT_SIZE, ASPECT_CORRECT() ? ANAKIWA : CHESTNUT_ROSE);
-        DrawText("PERSPECTIVE [ P ]:", 12, 418, FONT_SIZE, SUNFLOWER);
-        DrawText(PERSPECTIVE_CORRECT() ? "CORRECT" : "INCORRECT", 230, 418, FONT_SIZE, PERSPECTIVE_CORRECT() ? ANAKIWA : CHESTNUT_ROSE);
-        DrawText("SPACE [ N ]:", 530, 392, FONT_SIZE, SUNFLOWER);
-        DrawText(NDC_SPACE() ? "NDC" : "WORLD", 665, 392, FONT_SIZE, NDC_SPACE() ? BAHAMA_BLUE : ANAKIWA);
-        if (NDC_SPACE())
-        {
-            DrawText("REFLECT [ F ]:", 530, 418, FONT_SIZE, SUNFLOWER);
-            DrawText(REFLECT_Y() ? "Y_DOWN" : "Y_UP", 695, 418, FONT_SIZE, REFLECT_Y() ? ANAKIWA : CHESTNUT_ROSE);
-        }
+        updateSpatialFrame(&main, aspect, near, far, &spatialFrame);
+        //----------------------------------------------------------------------------------
+
+        // Draw
+        //----------------------------------------------------------------------------------
+        BeginDrawing();
+            ClearBackground(BLACK);
+
+            BeginMode3D(jugemu);
+                Vector3 depth, right, up;
+                basisVector(&main, &depth, &right, &up);
+                DrawLine3D(main.position, Vector3Add(main.position, right), NEON_CARROT);
+                DrawLine3D(main.position, Vector3Add(main.position, up), LILAC);
+                DrawLine3D(main.position, Vector3Add(main.position, depth), MARINER);
+
+                drawSpatialFrame(spatialFrame);
+
+                drawModelFilled(displayModel, meshTexture, meshRotation);
+                drawModelWiresAndPoints(displayModel, meshRotation);
+
+                drawNearPlanePoints(&main, aspect, near, &nearPlanePointsModel, displayMesh, meshRotation);
+                if (PERSPECTIVE_CORRECT() && TEXTURE_MODE())
+                {
+                    spatialFrameModel.materials[0].maps[MATERIAL_MAP_ALBEDO].texture = perspectiveCorrectTexture;
+                    DrawModel(spatialFrameModel, MODEL_POS, 1.0f, WHITE);
+                }
+                else
+                {
+                    perspectiveIncorrectCapture(&main, aspect, near, displayMesh, meshTexture, meshRotation);
+                }
+            EndMode3D();
+
+            DrawText("ARROWS: MOVE | SPACEBAR: PAUSE", 12, 12, FONT_SIZE, NEON_CARROT);
+            DrawText("W A : ZOOM", 12, 38, FONT_SIZE, NEON_CARROT);
+            DrawText("TEXTURE [ T ]:", 570, 12, FONT_SIZE, SUNFLOWER);
+            DrawText(TEXTURE_MODE() ? "ON" : "OFF", 740, 12, FONT_SIZE, TEXTURE_MODE() ? ANAKIWA : CHESTNUT_ROSE);
+            DrawText("COLORS [ C ]:", 570, 38, FONT_SIZE, SUNFLOWER);
+            DrawText(COLOR_MODE() ? "ON" : "OFF", 740, 38, FONT_SIZE, COLOR_MODE() ? ANAKIWA : CHESTNUT_ROSE);
+            DrawText("ASPECT [ Q ]:", 12, 392, FONT_SIZE, SUNFLOWER);
+            DrawText(ASPECT_CORRECT() ? "CORRECT" : "INCORRECT", 230, 392, FONT_SIZE, ASPECT_CORRECT() ? ANAKIWA : CHESTNUT_ROSE);
+            DrawText("PERSPECTIVE [ P ]:", 12, 418, FONT_SIZE, SUNFLOWER);
+            DrawText(PERSPECTIVE_CORRECT() ? "CORRECT" : "INCORRECT", 230, 418, FONT_SIZE, PERSPECTIVE_CORRECT() ? ANAKIWA : CHESTNUT_ROSE);
+            DrawText("SPACE [ N ]:", 530, 392, FONT_SIZE, SUNFLOWER);
+            DrawText(NDC_SPACE() ? "NDC" : "WORLD", 665, 392, FONT_SIZE, NDC_SPACE() ? BAHAMA_BLUE : ANAKIWA);
+            if (NDC_SPACE())
+            {
+                DrawText("REFLECT [ F ]:", 530, 418, FONT_SIZE, SUNFLOWER);
+                DrawText(REFLECT_Y() ? "Y_DOWN" : "Y_UP", 695, 418, FONT_SIZE, REFLECT_Y() ? ANAKIWA : CHESTNUT_ROSE);
+            }
         EndDrawing();
+        //----------------------------------------------------------------------------------
     }
 
+    // De-Initialization
+    //--------------------------------------------------------------------------------------
     UnloadModel(worldModel);
     UnloadModel(ndcModel);
     UnloadModel(nearPlanePointsModel);
     UnloadModel(spatialFrameModel);
     UnloadTexture(meshTexture);
-    CloseWindow();
+
+    CloseWindow();        // Close window and OpenGL context
+    //--------------------------------------------------------------------------------------
+
     return 0;
 }
 
@@ -489,11 +514,12 @@ static void
     if (TEXTURE_MODE() && !COLOR_MODE()) model->meshes[0].colors = NULL;
 
     ClearBackground(BLACK);
+
     BeginMode3D(*main);
-    const Texture2D previousTexture = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture;
-    model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = meshTexture;
-    DrawModelEx(*model, MODEL_POS, Y, RAD2DEG * rotation, MODEL_SCALE, WHITE);
-    model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = previousTexture;
+        const Texture2D previousTexture = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture;
+        model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = meshTexture;
+        DrawModelEx(*model, MODEL_POS, Y, RAD2DEG * rotation, MODEL_SCALE, WHITE);
+        model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = previousTexture;
     EndMode3D();
 
     Image rgba = LoadImageFromScreen();
@@ -501,14 +527,15 @@ static void
     model->meshes[0].colors = cacheColors;
 
     ClearBackground(BLACK);
+
     BeginMode3D(*main);
-    const Texture2D cacheTexture = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture;
-    const Color cacheMaterialColor = model->materials[0].maps[MATERIAL_MAP_ALBEDO].color;
-    model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = (Texture2D){0};
-    model->materials[0].maps[MATERIAL_MAP_ALBEDO].color = WHITE;
-    DrawModelEx(*model, MODEL_POS, Y, RAD2DEG * rotation, MODEL_SCALE, WHITE);
-    model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = cacheTexture;
-    model->materials[0].maps[MATERIAL_MAP_ALBEDO].color = cacheMaterialColor;
+        const Texture2D cacheTexture = model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture;
+        const Color cacheMaterialColor = model->materials[0].maps[MATERIAL_MAP_ALBEDO].color;
+        model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = (Texture2D){0};
+        model->materials[0].maps[MATERIAL_MAP_ALBEDO].color = WHITE;
+        DrawModelEx(*model, MODEL_POS, Y, RAD2DEG * rotation, MODEL_SCALE, WHITE);
+        model->materials[0].maps[MATERIAL_MAP_ALBEDO].texture = cacheTexture;
+        model->materials[0].maps[MATERIAL_MAP_ALBEDO].color = cacheMaterialColor;
     EndMode3D();
 
     const Image mask = LoadImageFromScreen();
